@@ -32,6 +32,7 @@ export const RecruitmentView: React.FC = () => {
 
   // Modals
   const [showCreateVagaModal, setShowCreateVagaModal] = useState(false);
+  const [showCandidatosListModal, setShowCandidatosListModal] = useState(false);
   const [selectedCandidatura, setSelectedCandidatura] = useState<(Candidatura & { candidato: Candidato }) | null>(null);
 
   // Form State for Vaga Creation
@@ -387,16 +388,27 @@ export const RecruitmentView: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
                   <button
                     onClick={() => {
                       dataService.duplicateVaga(vaga.id);
                       refreshData();
                     }}
-                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
                   >
                     <Copy className="h-3.5 w-3.5" />
                     Duplicar
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSelectedVagaId(vaga.id);
+                      setShowCandidatosListModal(true);
+                    }}
+                    className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 shadow-sm"
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                    Candidatos ({dataService.getCandidaturasByVaga(vaga.id).length})
                   </button>
 
                   <button
@@ -679,6 +691,116 @@ export const RecruitmentView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* CANDIDATES LIST BY VAGA MODAL (Requirement 9) */}
+      {showCandidatosListModal && selectedVaga && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden my-auto">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-900 px-6 py-4 text-white">
+              <div>
+                <span className="rounded bg-indigo-500/20 px-2 py-0.5 text-[10px] font-bold text-indigo-300 uppercase">
+                  {selectedVaga.modelo_trabalho}
+                </span>
+                <h3 className="text-base font-extrabold text-white mt-1">
+                  Candidatos inscritos na vaga: {selectedVaga.titulo}
+                </h3>
+                <p className="text-xs text-slate-300">
+                  Total de {candidaturasVaga.length} candidato(s) cadastrado(s) nesta vaga
+                </p>
+              </div>
+
+              <button
+                onClick={() => setShowCandidatosListModal(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4">
+              {candidaturasVaga.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 p-12 text-center text-xs text-slate-500">
+                  Nenhum candidato inscrito nesta vaga ainda.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-800">
+                      <tr>
+                        <th className="px-4 py-3">Candidato</th>
+                        <th className="px-4 py-3">Origem</th>
+                        <th className="px-4 py-3">Etapa Atual</th>
+                        <th className="px-4 py-3">Match IA</th>
+                        <th className="px-4 py-3">Data</th>
+                        <th className="px-4 py-3 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {candidaturasVaga.map((cApp) => (
+                        <tr key={cApp.id} className="hover:bg-slate-50/80 transition">
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-slate-900">{cApp.candidato.nome}</div>
+                            <div className="text-[10px] text-slate-500">
+                              {cApp.candidato.email} • {cApp.candidato.telefone}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {cApp.candidato.cidade} - {cApp.candidato.estado}
+                            </div>
+                          </td>
+
+                          <td className="px-4 py-3">
+                            {cApp.origem === 'portal_vagas' || cApp.candidato.origem === 'portal_vagas' ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-800 border border-emerald-200">
+                                <Sparkles className="h-3 w-3 text-emerald-600" />
+                                Portal de Vagas
+                              </span>
+                            ) : cApp.origem === 'banco_talentos_portal' ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-0.5 text-[10px] font-extrabold text-purple-800 border border-purple-200">
+                                Banco de Talentos
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold text-slate-700">
+                                Inclusão Manual
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3 font-semibold text-slate-800">
+                            <span className="rounded bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700">
+                              {cApp.etapa_pipeline}
+                            </span>
+                          </td>
+
+                          <td className="px-4 py-3">
+                            <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-xs">
+                              {cApp.pontuacao_compatibilidade}%
+                            </span>
+                          </td>
+
+                          <td className="px-4 py-3 text-[10px] text-slate-500 whitespace-nowrap">
+                            {new Date(cApp.data_candidatura).toLocaleDateString('pt-BR')}
+                          </td>
+
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => {
+                                setSelectedCandidatura(cApp);
+                                setParecerRhInput(cApp.parecer_rh || '');
+                              }}
+                              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-indigo-700 shadow-2xs"
+                            >
+                              Ver Perfil & Parecer
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

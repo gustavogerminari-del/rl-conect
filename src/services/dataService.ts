@@ -841,6 +841,16 @@ class DataService {
     return this.empresas.filter((e) => e.id === user.empresa_id);
   }
 
+  public getEmpresaById(empresaId: string): Empresa | null {
+    return this.empresas.find((e) => e.id === empresaId) || null;
+  }
+
+  public updateEmpresaPortalConfig(empresaId: string, updates: Partial<Empresa>): void {
+    this.empresas = this.empresas.map((e) => (e.id === empresaId ? { ...e, ...updates } : e));
+    this.addLog('EDICAO', `Portal de vagas da empresa ${empresaId} atualizado.`);
+    this.notify();
+  }
+
   public createEmpresa(data: Omit<Empresa, 'id' | 'criado_em'>): Empresa {
     const newEmp: Empresa = {
       ...data,
@@ -914,6 +924,13 @@ class DataService {
   public getPublicVagas(): Vaga[] {
     // Public portal displays all published jobs
     return this.vagas.filter((v) => v.publicado && v.status === 'publicada');
+  }
+
+  public getPublicVagasByEmpresa(empresaId: string): Vaga[] {
+    // PUBLIC PORTAL MULTIEMPRESA RULE: Strictly filter jobs by empresa_id and status = 'publicada'
+    return this.vagas.filter(
+      (v) => v.empresa_id === empresaId && (v.publicado || v.status === 'publicada') && v.status !== 'encerrada'
+    );
   }
 
   public createVaga(data: Omit<Vaga, 'id' | 'criado_em' | 'empresa_id'>): Vaga {
@@ -1008,13 +1025,18 @@ class DataService {
     }
   }
 
-  public applyToVagaPublic(vagaId: string, candidateData: Omit<Candidato, 'id' | 'criado_em' | 'empresa_id'>): { candidato: Candidato; candidatura: Candidatura } {
+  public applyToVagaPublic(
+    vagaId: string,
+    candidateData: Omit<Candidato, 'id' | 'criado_em' | 'empresa_id'>
+  ): { candidato: Candidato; candidatura: Candidatura } {
     const vaga = this.vagas.find((v) => v.id === vagaId);
     const empresaTargetId = vaga ? vaga.empresa_id : this.activeEmpresaId;
 
-    // Create or find candidate
+    // RULE 8: Check if candidate already exists for this company by email
     let cand = this.candidatos.find(
-      (c) => c.email.toLowerCase() === candidateData.email.toLowerCase() && c.empresa_id === empresaTargetId
+      (c) =>
+        c.email.trim().toLowerCase() === candidateData.email.trim().toLowerCase() &&
+        c.empresa_id === empresaTargetId
     );
 
     if (!cand) {
@@ -1022,12 +1044,24 @@ class DataService {
         ...candidateData,
         id: 'cand_' + Date.now(),
         empresa_id: empresaTargetId,
+        origem: 'portal_vagas',
         criado_em: new Date().toISOString(),
       };
       this.candidatos.push(cand);
+    } else {
+      // Update candidate details with newest info
+      cand.nome = candidateData.nome || cand.nome;
+      cand.telefone = candidateData.telefone || cand.telefone;
+      cand.cidade = candidateData.cidade || cand.cidade;
+      cand.estado = candidateData.estado || cand.estado;
+      if (candidateData.curriculo_url) cand.curriculo_url = candidateData.curriculo_url;
+      if (candidateData.curriculo_texto) cand.curriculo_texto = candidateData.curriculo_texto;
+      if (candidateData.linkedin_url) cand.linkedin_url = candidateData.linkedin_url;
+      if (candidateData.pretensao_salarial) cand.pretensao_salarial = candidateData.pretensao_salarial;
+      if (candidateData.observacoes) cand.observacoes = candidateData.observacoes;
     }
 
-    // Create candidature
+    // RULE 7: Create candidature with empresa_id, vaga_id, candidato_id, origem = 'portal_vagas'
     const candidatura: Candidatura = {
       id: 'cand_app_' + Date.now(),
       empresa_id: empresaTargetId,
@@ -1036,25 +1070,95 @@ class DataService {
       etapa_pipeline: 'Inscritos',
       ordem_etapa: 1,
       status: 'em_andamento',
-      pontuacao_compatibilidade: cand.score_ia || 75,
+      pontuacao_compatibilidade: cand.score_ia || 80,
+      origem: 'portal_vagas',
       data_candidatura: new Date().toISOString(),
       atualizado_em: new Date().toISOString(),
     };
 
     this.candidaturas.unshift(candidatura);
 
-    // Create notification for company recruiters
+    // Create notification for company
     this.notificacoes.unshift({
       id: 'notif_' + Date.now(),
       empresa_id: empresaTargetId,
       usuario_id: 'usr_admin_1',
-      titulo: 'Nova Inscrição Pública!',
+      titulo: 'Nova Inscrição no Portal!',
       mensagem: `${cand.nome} se inscreveu na vaga "${vaga?.titulo || 'Vaga'}".`,
       lida: false,
       link: '/recrutamento',
       criado_em: new Date().toISOString(),
     });
 
+    this.addLog('CRIACAO', `Candidatura de ${cand.nome} recebida no Portal de Vagas.`);
+    this.notify();
+    return { candidato: cand, candidatura };
+  }
+
+  public applyToTalentPoolPublic(
+    empresaId: string,
+    candidateData: Omit<Candidato, 'id' | 'criado_em' | 'empresa_id'>
+  ): { candidato: Candidato; candidatura: Candidatura } {
+    const empresaTargetId = empresaId || this.activeEmpresaId;
+
+    // RULE 8: Check if candidate already exists
+    let cand = this.candidatos.find(
+      (c) =>
+        c.email.trim().toLowerCase() === candidateData.email.trim().toLowerCase() &&
+        c.empresa_id === empresaTargetId
+    );
+
+    if (!cand) {
+      cand = {
+        ...candidateData,
+        id: 'cand_' + Date.now(),
+        empresa_id: empresaTargetId,
+        origem: 'banco_talentos_portal',
+        criado_em: new Date().toISOString(),
+      };
+      this.candidatos.push(cand);
+    } else {
+      cand.nome = candidateData.nome || cand.nome;
+      cand.telefone = candidateData.telefone || cand.telefone;
+      cand.cidade = candidateData.cidade || cand.cidade;
+      cand.estado = candidateData.estado || cand.estado;
+      if (candidateData.curriculo_url) cand.curriculo_url = candidateData.curriculo_url;
+      if (candidateData.curriculo_texto) cand.curriculo_texto = candidateData.curriculo_texto;
+      if (candidateData.linkedin_url) cand.linkedin_url = candidateData.linkedin_url;
+    }
+
+    // Find first published vaga or create general talent candidature
+    const firstVaga = this.vagas.find((v) => v.empresa_id === empresaTargetId);
+    const vagaId = firstVaga ? firstVaga.id : 'banco_talentos';
+
+    const candidatura: Candidatura = {
+      id: 'cand_app_' + Date.now(),
+      empresa_id: empresaTargetId,
+      vaga_id: vagaId,
+      candidato_id: cand.id,
+      etapa_pipeline: 'Inscritos',
+      ordem_etapa: 1,
+      status: 'em_andamento',
+      pontuacao_compatibilidade: 85,
+      origem: 'banco_talentos_portal',
+      data_candidatura: new Date().toISOString(),
+      atualizado_em: new Date().toISOString(),
+    };
+
+    this.candidaturas.unshift(candidatura);
+
+    this.notificacoes.unshift({
+      id: 'notif_' + Date.now(),
+      empresa_id: empresaTargetId,
+      usuario_id: 'usr_admin_1',
+      titulo: 'Novo Cadastro no Banco de Talentos!',
+      mensagem: `${cand.nome} cadastrou seu currículo no Banco de Talentos pelo Portal.`,
+      lida: false,
+      link: '/recrutamento',
+      criado_em: new Date().toISOString(),
+    });
+
+    this.addLog('CRIACAO', `Currículo de ${cand.nome} cadastrado no Banco de Talentos via Portal.`);
     this.notify();
     return { candidato: cand, candidatura };
   }

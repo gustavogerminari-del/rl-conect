@@ -30,6 +30,14 @@ export interface Empresa {
   cidade: string;
   estado: string;
   criado_em: string;
+  descricao?: string;
+  banner_url?: string;
+  cor_principal?: string;
+  contato_email?: string;
+  contato_telefone?: string;
+  website?: string;
+  linkedin_url?: string;
+  instagram_url?: string;
 }
 
 export interface Usuario {
@@ -113,6 +121,10 @@ export interface Candidato {
   experiencias?: Array<{ empresa: string; cargo: string; periodo: string; descricao: string }>;
   formacao?: Array<{ instituisao: string; curso: string; ano: string }>;
   habilidades: string[];
+  linkedin_url?: string;
+  pretensao_salarial?: string;
+  observacoes?: string;
+  origem?: 'portal_vagas' | 'banco_talentos_portal' | 'manual' | 'headhunter';
   criado_em: string;
 }
 
@@ -140,6 +152,7 @@ export interface Candidatura {
   pontos_fortes_ia?: string[];
   pontos_atencao_ia?: string[];
   perguntas_sugeridas_ia?: string[];
+  origem?: 'portal_vagas' | 'banco_talentos_portal' | 'manual' | 'headhunter';
   data_candidatura: string;
   atualizado_em: string;
 }
