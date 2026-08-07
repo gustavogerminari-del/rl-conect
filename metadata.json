@@ -1,0 +1,6 @@
+{
+  "name": "RL CONNECT 2.0",
+  "description": "Plataforma ATS e RH SaaS Multiempresa completa com Recrutamento, Seleção, Headhunter, IA Gemini e Departamento Pessoal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
