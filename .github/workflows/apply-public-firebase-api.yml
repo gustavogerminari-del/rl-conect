@@ -1,0 +1,38 @@
+name: Apply public Firebase API
+
+on:
+  push:
+    branches: [agent/firebase-v49-recovery]
+    paths:
+      - scripts/apply-public-firebase-api.py
+      - .github/workflows/apply-public-firebase-api.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/firebase-v49-recovery
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python scripts/apply-public-firebase-api.py
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/views/PublicCompanyPortal.tsx package-lock.json
+          git diff --cached --quiet && exit 0
+          git commit -m "security: route public applications through Firebase Admin"
+          git push origin HEAD:agent/firebase-v49-recovery
