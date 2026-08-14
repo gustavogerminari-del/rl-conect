@@ -43,3 +43,11 @@ export function candidateIdentity(companyId: string, email: string): string { re
 export function applicationIdentity(companyId: string, jobId: string, candidateId: string): string { return `${companyId}:${jobId}:${candidateId}`; }
 export function admissionIdentity(companyId: string, applicationId: string): string { return `${companyId}:${applicationId}`; }
 export function billingIdentity(companyId: string, applicationId: string): string { return `${companyId}:${applicationId}`; }
+export function stableEntityId(prefix: string, identity: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < identity.length; i += 1) {
+    hash ^= identity.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${prefix}_${(hash >>> 0).toString(36)}`;
+}
