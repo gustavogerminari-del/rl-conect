@@ -3,13 +3,18 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { googleWorkspaceConfigured, registerGoogleWorkspaceRoutes } from './server/googleWorkspaceRoutes.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+app.disable('x-powered-by');
+const PORT = Number(process.env.PORT || 3000);
 
 app.use(express.json({ limit: '10mb' }));
+
+// Google OAuth/Calendar/Meet routes are registered before Vite so callbacks are never swallowed by the SPA.
+registerGoogleWorkspaceRoutes(app);
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -27,6 +32,9 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     version: '2.0.0',
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    firebaseProjectId: 'rl-connect-ed797',
+    firebaseAdminConfigured: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON),
+    googleWorkspaceConfigured: googleWorkspaceConfigured(),
   });
 });
 
