@@ -1,3 +1,5 @@
+import { firebaseStateBridge } from './firebaseStateBridge';
+import { firebaseSessionService, normalizeRlRole } from './firebaseSessionService';
 import {
   Empresa,
   Usuario,
@@ -25,26 +27,9 @@ import {
   StructuredAIResponse,
 } from '../types';
 
-// Storage keys for persistent state
-const STORAGE_PREFIX = 'rl_connect_v2_';
-
-function loadFromStorage<T>(key: string, defaultValue: T): T {
-  try {
-    const saved = localStorage.getItem(STORAGE_PREFIX + key);
-    if (saved) return JSON.parse(saved);
-  } catch (err) {
-    console.error('Error loading from storage:', err);
-  }
-  return defaultValue;
-}
-
-function saveToStorage<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
-  } catch (err) {
-    console.error('Error saving to storage:', err);
-  }
-}
+// Firebase é a única camada de persistência. Os arrays iniciais são apenas placeholders até a hidratação do Firestore.
+function loadFromStorage<T>(_key:string, defaultValue:T):T{return defaultValue;}
+function saveToStorage<T>(_key:string,_value:T):void{}
 
 // Initial Seed Data
 const initialEmpresas: Empresa[] = [
@@ -196,7 +181,7 @@ const initialVagas: Vaga[] = [
     salario_max: 18000,
     exibir_salario: true,
     status: 'publicada',
-    requisitos: ['TypeScript / Node.js 4+ anos', 'React 18+ com Tailwind CSS', 'PostgreSQL / Supabase', 'Arquitetura de microsserviços e APIs REST'],
+    requisitos: ['TypeScript / Node.js 4+ anos', 'React 18+ com Tailwind CSS', 'Firestore / Firebase', 'Arquitetura de microsserviços e APIs REST'],
     diferenciais: ['Experiência com Next.js / Cloud Run', 'Conhecimento em Docker e CI/CD'],
     beneficios: ['Vale Refeição R$ 1.200/mês', 'Plano de Saúde Bradesco Top', 'Auxílio Home Office R$ 400', 'Seguro de Vida'],
     publicado: true,
@@ -515,7 +500,7 @@ const initialLogs: LogAuditoria[] = [
     usuario_id: 'usr_admin_1',
     usuario_nome: 'Carlos Silva',
     acao: 'LOGIN',
-    detalhes: 'Sessão iniciada via Supabase Auth com sucesso.',
+    detalhes: 'Sessão iniciada via Firebase Auth com sucesso.',
     ip: '189.120.45.12',
     resultado: 'SUCESSO',
     criado_em: '2026-08-06T08:30:00Z',
@@ -755,41 +740,45 @@ class DataService {
   private aiLogs: AILogExecution[] = loadFromStorage('aiLogs', initialAILogs);
 
   // Active Session State
-  private currentUserId: string = loadFromStorage('currentUserId', 'usr_admin_1');
-  private activeEmpresaId: string = loadFromStorage('activeEmpresaId', 'emp_1');
+  private currentUserId: string = '';
+  private activeEmpresaId: string = '';
 
   private listeners: Set<() => void> = new Set();
+  private firebaseReady = false;
+  private firebaseAuthenticated = false;
+  private firebaseError: string | null = null;
+
+  constructor() {
+    firebaseSessionService.subscribe(async (session, error) => {
+      this.firebaseError = error || null;
+      if (!session) { this.firebaseAuthenticated=false; this.firebaseReady=true; this.listeners.forEach(fn=>fn()); return; }
+      this.firebaseReady=false; this.firebaseAuthenticated=true;
+      const profile:any={...session.profile,id:session.firebaseUser.uid,role:normalizeRlRole(session.profile.role||session.profile.tipoUsuario) as UserRole,empresa_id:session.companyId};
+      this.currentUserId=profile.id; this.activeEmpresaId=profile.empresa_id;
+      try { await this.hydrateTenantFromFirebase(profile.empresa_id,profile); this.firebaseError=null; }
+      catch(e){ this.firebaseError=e instanceof Error?e.message:String(e); }
+      finally { this.firebaseReady=true; this.listeners.forEach(fn=>fn()); }
+    });
+  }
+  private async hydrateTenantFromFirebase(companyId:string,profile?:any){
+    const state:any=await firebaseStateBridge.loadTenantState(companyId);
+    this.empresas=state.empresas||[];this.usuarios=state.usuarios||[];if(profile&&!this.usuarios.some(u=>u.id===profile.id))this.usuarios.push(profile as Usuario);
+    this.vagas=state.vagas||[];this.candidatos=state.candidatos||[];this.candidaturas=state.candidaturas||[];this.entrevistas=state.entrevistas||[];this.clientes=state.clientes||[];this.funcionarios=state.funcionarios||[];this.registroPontos=state.registroPontos||[];this.ferias=state.ferias||[];this.departamentos=state.departamentos||[];this.cargos=state.cargos||[];this.logs=state.logs||[];this.notificacoes=state.notificacoes||[];this.empresaModulos=state.empresaModulos||[];this.assinaturas=state.assinaturas||[];this.pagamentos=state.pagamentos||[];
+  }
+  public getFirebaseStatus(){return{ready:this.firebaseReady,authenticated:this.firebaseAuthenticated,error:this.firebaseError};}
+  public loginFirebase(email:string,password:string){return firebaseSessionService.login(email,password);}
+  public logoutFirebase(){return firebaseSessionService.logout();}
+  public async loadPublicPortalFirebase(companyId:string){const s=await firebaseStateBridge.loadPublicPortal(companyId);this.activeEmpresaId=companyId;this.empresas=s.empresa?[s.empresa as Empresa]:[];this.vagas=s.vagas as Vaga[];this.listeners.forEach(fn=>fn());}
 
   public subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  private notify(): void {
-    this.saveAll();
-    this.listeners.forEach((fn) => fn());
-  }
-
+  private notify(): void { this.saveAll(); this.listeners.forEach(fn=>fn()); }
   private saveAll(): void {
-    saveToStorage('empresas', this.empresas);
-    saveToStorage('usuarios', this.usuarios);
-    saveToStorage('vagas', this.vagas);
-    saveToStorage('candidatos', this.candidatos);
-    saveToStorage('candidaturas', this.candidaturas);
-    saveToStorage('entrevistas', this.entrevistas);
-    saveToStorage('clientes', this.clientes);
-    saveToStorage('funcionarios', this.funcionarios);
-    saveToStorage('registroPontos', this.registroPontos);
-    saveToStorage('ferias', this.ferias);
-    saveToStorage('departamentos', this.departamentos);
-    saveToStorage('cargos', this.cargos);
-    saveToStorage('logs', this.logs);
-    saveToStorage('notificacoes', this.notificacoes);
-    saveToStorage('empresaModulos', this.empresaModulos);
-    saveToStorage('assinaturas', this.assinaturas);
-    saveToStorage('pagamentos', this.pagamentos);
-    saveToStorage('currentUserId', this.currentUserId);
-    saveToStorage('activeEmpresaId', this.activeEmpresaId);
+    if(!this.firebaseReady||!this.firebaseAuthenticated||!this.activeEmpresaId)return;
+    void firebaseStateBridge.persistTenantState(this.activeEmpresaId,{empresas:this.empresas,usuarios:this.usuarios,vagas:this.vagas,candidatos:this.candidatos,candidaturas:this.candidaturas,entrevistas:this.entrevistas,clientes:this.clientes,funcionarios:this.funcionarios,registroPontos:this.registroPontos,ferias:this.ferias,departamentos:this.departamentos,cargos:this.cargos,logs:this.logs,notificacoes:this.notificacoes,empresaModulos:this.empresaModulos,assinaturas:this.assinaturas,pagamentos:this.pagamentos}).catch(error=>{console.error('[Firestore] Falha ao persistir estado.',error);this.firebaseError=error instanceof Error?error.message:String(error);this.listeners.forEach(fn=>fn());});
   }
 
   // --- Session & Multi-Tenant Helpers ---
@@ -800,15 +789,7 @@ class DataService {
     );
   }
 
-  public setCurrentUser(id: string): void {
-    const user = this.usuarios.find((u) => u.id === id);
-    if (user) {
-      this.currentUserId = user.id;
-      this.activeEmpresaId = user.empresa_id;
-      this.addLog('LOGIN', `Sessão alterada para ${user.nome} (${user.role})`);
-      this.notify();
-    }
-  }
+  public setCurrentUser(_id: string): void { console.warn('[Firebase Auth] Troca local de usuário bloqueada.'); }
 
   public getActiveEmpresa(): Empresa {
     return (
@@ -889,7 +870,7 @@ class DataService {
       );
       return {
         modulo: mod,
-        ativo: em ? em.ativo : true,
+        ativo: em ? em.ativo : false,
       };
     });
   }

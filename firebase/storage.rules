@@ -1,0 +1,7 @@
+rules_version = '2';
+service firebase.storage { match /b/{bucket}/o {
+ function signedIn(){return request.auth!=null;} function profilePath(){return /databases/(default)/documents/usuarios/$(request.auth.uid);} function hasProfile(){return signedIn()&&firestore.exists(profilePath());} function profile(){return firestore.get(profilePath()).data;} function tenant(){return hasProfile()?(profile().empresa_id!=null?profile().empresa_id:(profile().empresaId!=null?profile().empresaId:profile().companyId)):'';} function master(){return hasProfile()&&profile().role in ['master_admin','MASTER','MASTER_ADMIN','SUPER_ADMINISTRADOR'];} function safe(){return request.resource!=null&&request.resource.size<=20*1024*1024&&request.resource.contentType.matches('(application/pdf|application/msword|application/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document|image/jpeg|image/png|image/webp|text/plain)');}
+ match /companies/{companyId}/{allPaths=**}{allow read,delete:if master()||tenant()==companyId;allow create,update:if (master()||tenant()==companyId)&&safe();}
+ match /public_applications/{companyId}/{allPaths=**}{allow create:if safe();allow read,update,delete:if master()||tenant()==companyId;}
+ match /public/{allPaths=**}{allow read:if true;allow write:if false;} match /{allPaths=**}{allow read,write:if false;}
+}}
