@@ -848,7 +848,7 @@ class DataService {
     // Initialize modules for new empresa
     initialModulos.forEach((m) => {
       this.empresaModulos.push({
-        id: 'em_' + Date.now() + '_' + m.chave,
+        id: stableEntityId('em', `${newEmp.id}:${m.id}`),
         empresa_id: newEmp.id,
         modulo_id: m.id,
         ativo: true,
@@ -888,7 +888,7 @@ class DataService {
       this.empresaModulos[index].ativo = ativo;
     } else {
       this.empresaModulos.push({
-        id: 'em_' + Date.now(),
+        id: stableEntityId('em', `${empresaId}:${moduloId}`),
         empresa_id: empresaId,
         modulo_id: moduloId,
         ativo,

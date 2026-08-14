@@ -18,7 +18,8 @@ const checks: Array<[string, () => void]> = [
     const x = block('public createEmpresa', 'public updateEmpresa');
     assert.match(x, /normalizeDocument\(data\.cnpj\)/);
     assert.match(x, /existing/);
-    assert.match(x, /duplicidade evitada/);
+    assert.match(x, /stableEntityId\('emp'/);
+    assert.match(x, /stableEntityId\('em', `\$\{newEmp\.id\}:\$\{m\.id\}`\)/);
   }],
   ['Usuário local: e-mail normalizado + reutilização', () => {
     const x = block('public createUsuario', 'public async createFirebaseAccess');
