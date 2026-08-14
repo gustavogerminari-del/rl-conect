@@ -1,0 +1,37 @@
+name: QA Two Access Firebase Flows
+on:
+  push:
+    branches: [agent/firebase-v49-recovery]
+    paths:
+      - 'src/**'
+      - 'server/**'
+      - 'server.ts'
+      - 'scripts/qa-two-access-flows.ts'
+      - '.github/workflows/qa-two-access-flows.yml'
+      - 'package.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/firebase-v49-recovery
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: TypeScript
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Two-access flow contracts
+        run: npx tsx scripts/qa-two-access-flows.ts
+      - name: Reject Supabase and fake Meet runtime
+        run: |
+          if grep -Rni --exclude-dir=node_modules --exclude-dir=.git -E '@supabase|VITE_SUPABASE|meet\.google\.com/(abc-defg-hij|xyz-uvwx-rst)' src server server.ts package.json .env.example; then
+            echo 'Legacy/fake runtime reference detected' >&2
+            exit 1
+          fi
