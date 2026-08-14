@@ -1,0 +1,32 @@
+name: Apply idempotency guards
+
+on:
+  push:
+    branches: [agent/google-calendar-meet]
+    paths:
+      - scripts/apply-idempotency-guards.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/google-calendar-meet
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply patch
+        run: python scripts/apply-idempotency-guards.py
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/services/dataService.ts scripts/e2e-flow-tests.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: prevent duplicate records across hiring flows"
+          git push origin HEAD:agent/google-calendar-meet
