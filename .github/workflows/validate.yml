@@ -3,6 +3,9 @@ name: Validate RL Connect
 on:
   pull_request:
     branches: [main]
+  push:
+    branches:
+      - agent/google-calendar-meet
   workflow_dispatch:
 
 permissions:
@@ -28,6 +31,9 @@ jobs:
 
       - name: TypeScript
         run: npm run lint
+
+      - name: E2E business flows
+        run: npm run test:flows
 
       - name: Build
         run: npm run build
