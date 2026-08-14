@@ -14,6 +14,7 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import { dataService } from '../services/dataService';
+import { canAccessView, moduleStateFromCompanyModules } from '../services/accessControl';
 import { isSupabaseConfigured } from '../lib/supabase';
 
 export type ViewTab =
@@ -35,38 +36,41 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
+  const user = dataService.getCurrentUser();
   const empresaModulos = dataService.getEmpresaModulos();
+  const moduleState = moduleStateFromCompanyModules(empresaModulos);
+  const allowed = (view: ViewTab) => canAccessView(user.role, view, moduleState);
 
   const menuGroups = [
     {
       title: 'INÍCIO',
       items: [
-        { id: 'dashboard' as ViewTab, label: 'Visão Geral', icon: LayoutDashboard, visible: true, badge: null },
+        { id: 'dashboard' as ViewTab, label: 'Visão Geral', icon: LayoutDashboard, badge: null },
       ],
     },
     {
       title: 'RECRUTAMENTO & HEADHUNTER',
       items: [
-        { id: 'recrutamento' as ViewTab, label: 'Vagas & Processos (ATS)', icon: Briefcase, visible: true, badge: '16' },
-        { id: 'headhunter' as ViewTab, label: 'Headhunter Executive', icon: UserCheck, visible: true, badge: 'B2B' },
-        { id: 'ia_screening' as ViewTab, label: 'IA & Triagem CV', icon: Sparkles, visible: true, badge: 'Gemini', special: true },
-        { id: 'agenda' as ViewTab, label: 'Agenda & Entrevistas', icon: Calendar, visible: true, badge: '1' },
+        { id: 'recrutamento' as ViewTab, label: 'Vagas & Processos (ATS)', icon: Briefcase, badge: null },
+        { id: 'headhunter' as ViewTab, label: 'Headhunter Executive', icon: UserCheck, badge: 'B2B' },
+        { id: 'ia_screening' as ViewTab, label: 'IA & Triagem CV', icon: Sparkles, badge: 'IA', special: true },
+        { id: 'agenda' as ViewTab, label: 'Agenda & Entrevistas', icon: Calendar, badge: null },
       ],
     },
     {
       title: 'DEPARTAMENTO PESSOAL',
       items: [
-        { id: 'departamento_pessoal' as ViewTab, label: 'Gestão DP & Ponto', icon: Users, visible: true, badge: 'RH' },
+        { id: 'departamento_pessoal' as ViewTab, label: 'Gestão DP & Ponto', icon: Users, badge: 'RH' },
       ],
     },
     {
       title: 'PLATAFORMA & MASTER',
       items: [
-        { id: 'master_admin' as ViewTab, label: 'Painel Master Admin', icon: Crown, visible: true, badge: 'MASTER', highlight: true },
-        { id: 'construtor_ia' as ViewTab, label: 'Construtor Master IA', icon: Cpu, visible: true, badge: 'IA', special: true },
-        { id: 'portal_vagas' as ViewTab, label: 'Portal de Vagas Público', icon: Globe, visible: true, badge: 'Público' },
-        { id: 'audit_logs' as ViewTab, label: 'Auditoria & RLS Logs', icon: ShieldAlert, visible: true, badge: 'Segurança' },
-        { id: 'settings' as ViewTab, label: 'Configurações Empresa', icon: Settings, visible: true, badge: null },
+        { id: 'master_admin' as ViewTab, label: 'Painel Master Admin', icon: Crown, badge: 'MASTER', highlight: true },
+        { id: 'construtor_ia' as ViewTab, label: 'Construtor Master IA', icon: Cpu, badge: 'IA', special: true },
+        { id: 'portal_vagas' as ViewTab, label: 'Portal de Vagas Público', icon: Globe, badge: 'Público' },
+        { id: 'audit_logs' as ViewTab, label: 'Auditoria & RLS Logs', icon: ShieldAlert, badge: 'Segurança' },
+        { id: 'settings' as ViewTab, label: 'Configurações Empresa', icon: Settings, badge: null },
       ],
     },
   ];
@@ -90,7 +94,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
 
       <nav className="flex-1 space-y-5 p-3 overflow-y-auto scrollbar-none">
         {menuGroups.map((group, groupIdx) => {
-          const visibleItems = group.items.filter((item) => item.visible);
+          const visibleItems = group.items.filter((item) => allowed(item.id));
           if (visibleItems.length === 0) return null;
           return (
             <div key={groupIdx} className="space-y-1">
@@ -137,6 +141,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
         <div className="flex items-center gap-2 text-[10px] text-slate-400">
           <span className={`w-2 h-2 rounded-full ${isSupabaseConfigured ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
           <span>{isSupabaseConfigured ? 'Supabase configurado' : 'Modo local — Supabase não configurado'}</span>
+        </div>
+        <div className="text-[10px] text-slate-500 truncate">
+          Perfil: <strong className="text-slate-300">{user.role.replace('_', ' ')}</strong>
         </div>
         <div className="text-[10px] text-slate-500 truncate">
           Empresa: <strong className="text-slate-300">{dataService.getActiveEmpresa().nome}</strong>
