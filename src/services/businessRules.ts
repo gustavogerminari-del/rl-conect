@@ -9,26 +9,41 @@ export function resolveHiringDestination(origin?: string): HiringDestination {
   return origin === 'headhunter' ? 'FINANCEIRO_HEADHUNTER' : 'ADMISSION';
 }
 
+function parseBrazilianMoney(raw: string): number | null {
+  const cleaned = raw.replace(/[^0-9.,-]/g, '').trim();
+  if (!cleaned) return null;
+
+  let normalized = cleaned;
+  if (cleaned.includes(',')) {
+    normalized = cleaned.replace(/\./g, '').replace(',', '.');
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(cleaned)) {
+    normalized = cleaned.replace(/\./g, '');
+  }
+
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : null;
+}
+
 export function parseFeeRule(raw?: string): FeeRule | null {
   if (!raw) return null;
-  const text = raw.trim().toLowerCase().replace(',', '.');
+  const original = raw.trim().toLowerCase();
 
-  const percent = text.match(/([0-9]+(?:\.[0-9]+)?)\s*%/);
+  const percent = original.match(/([0-9]+(?:[.,][0-9]+)?)\s*%/);
   if (percent) {
-    const value = Number(percent[1]);
+    const value = Number(percent[1].replace(',', '.'));
     return value > 0 ? { type: 'percent', value } : null;
   }
 
-  const multiplier = text.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:x|sal[aá]rios?)/);
+  const multiplier = original.match(/([0-9]+(?:[.,][0-9]+)?)\s*(?:x|sal[aá]rios?)/);
   if (multiplier) {
-    const value = Number(multiplier[1]);
+    const value = Number(multiplier[1].replace(',', '.'));
     return value > 0 ? { type: 'salary_multiplier', value } : null;
   }
 
-  const fixed = text.match(/(?:r\$\s*)?([0-9]+(?:\.[0-9]+)?)/);
-  if (fixed && /fix|r\$/.test(text)) {
-    const value = Number(fixed[1]);
-    return value > 0 ? { type: 'fixed', value } : null;
+  if (/fix|r\$/.test(original)) {
+    const fixedMatch = original.match(/(?:r\$\s*)?([0-9][0-9.,]*)/);
+    const value = fixedMatch ? parseBrazilianMoney(fixedMatch[1]) : null;
+    return value && value > 0 ? { type: 'fixed', value } : null;
   }
 
   return null;
