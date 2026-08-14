@@ -1,0 +1,42 @@
+name: Apply Firebase business flows
+
+on:
+  push:
+    branches: [agent/firebase-v49-recovery]
+    paths:
+      - scripts/apply-firebase-business-flows.py
+      - .github/workflows/apply-firebase-business-flows.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/firebase-v49-recovery
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply hiring flows
+        run: python scripts/apply-firebase-business-flows.py
+      - name: Install
+        run: npm install
+      - name: TypeScript
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/services/dataService.ts package-lock.json
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: persist Recruitment DP and Headhunter flows in Firebase"
+          git push origin HEAD:agent/firebase-v49-recovery
