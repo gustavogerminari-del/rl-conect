@@ -21,6 +21,7 @@ import {
   Check,
 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
+import { PublicApplicationService } from '../../services/PublicApplicationService';
 import { Empresa, Vaga } from '../../types';
 
 interface PublicCompanyPortalProps {
@@ -123,7 +124,7 @@ export const PublicCompanyPortal: React.FC<PublicCompanyPortalProps> = ({
     setCurriculoFile(file);
     setCurriculoFileName(file.name);
 
-    // Create a local object URL or Base64 data for the file
+    // Local URL is preview-only. The actual file is uploaded by the Firebase Admin public endpoint.
     const fileUrl = URL.createObjectURL(file);
     setCurriculoUrl(fileUrl);
 
@@ -158,74 +159,52 @@ Telefone e contato indicados na candidatura.`;
     }
   };
 
-  const handleApplyToJob = (e: React.FormEvent) => {
+  const handleApplyToJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedVaga || !nomeForm || !emailForm || !aceiteLgpd) return;
-
+    if (!selectedVaga || !empresa || !nomeForm || !emailForm || !aceiteLgpd) return;
     setIsSubmitting(true);
-
     try {
-      // RULE 7 & 8: Apply to job using dataService with company linkage & email deduplication
-      dataService.applyToVagaPublic(selectedVaga.id, {
+      await PublicApplicationService.applyToJob(empresa.id, selectedVaga.id, {
         nome: nomeForm,
         email: emailForm,
-        telefone: telefoneForm || '(11) 99999-9999',
-        cidade: cidadeForm || empresa?.cidade || 'São Paulo',
-        estado: estadoForm || 'SP',
+        telefone: telefoneForm,
+        cidade: cidadeForm || empresa.cidade,
+        estado: estadoForm,
         cargo_desejado: selectedVaga.titulo,
-        curriculo_url: curriculoUrl || `file://${curriculoFileName}`,
-        curriculo_texto: curriculoTexto || `Anexo: ${curriculoFileName}`,
         linkedin_url: linkedinForm,
         pretensao_salarial: pretensaoForm,
         observacoes: observacoesForm,
-        resumo_ia: `Candidatura realizada via Portal de Vagas para "${selectedVaga.titulo}".`,
-        score_ia: 85,
-        tags: ['Portal de Vagas', selectedVaga.modelo_trabalho],
-        habilidades: selectedVaga.requisitos.slice(0, 4),
-        origem: 'portal_vagas',
-      });
-
+        curriculo_texto: curriculoTexto,
+      }, curriculoFile, aceiteLgpd);
       setSubmissionSuccess(true);
     } catch (err) {
       console.error('Error submitting application:', err);
-    } finally {
-      setIsSubmitting(false);
-    }
+      alert(err instanceof Error ? err.message : 'Não foi possível enviar a candidatura.');
+    } finally { setIsSubmitting(false); }
   };
 
-  const handleApplyToTalentPool = (e: React.FormEvent) => {
+  const handleApplyToTalentPool = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empresa || !nomeForm || !emailForm || !aceiteLgpd) return;
-
     setIsSubmitting(true);
-
     try {
-      // RULE 15: Apply directly to company Talent Pool
-      dataService.applyToTalentPoolPublic(empresa.id, {
+      await PublicApplicationService.applyToTalentPool(empresa.id, {
         nome: nomeForm,
         email: emailForm,
-        telefone: telefoneForm || '(11) 99999-9999',
-        cidade: cidadeForm || empresa.cidade || 'São Paulo',
-        estado: estadoForm || 'SP',
+        telefone: telefoneForm,
+        cidade: cidadeForm || empresa.cidade,
+        estado: estadoForm,
         cargo_desejado: 'Banco de Talentos / Oportunidades Futuras',
-        curriculo_url: curriculoUrl || `file://${curriculoFileName}`,
-        curriculo_texto: curriculoTexto || `Anexo Banco de Talentos: ${curriculoFileName}`,
         linkedin_url: linkedinForm,
         pretensao_salarial: pretensaoForm,
         observacoes: observacoesForm,
-        resumo_ia: `Cadastro no Banco de Talentos da empresa ${empresa.nome}.`,
-        score_ia: 80,
-        tags: ['Banco de Talentos', 'Portal Público'],
-        habilidades: ['Talento Cadastrado'],
-        origem: 'banco_talentos_portal',
-      });
-
+        curriculo_texto: curriculoTexto,
+      }, curriculoFile, aceiteLgpd);
       setSubmissionSuccess(true);
     } catch (err) {
       console.error('Error submitting to talent pool:', err);
-    } finally {
-      setIsSubmitting(false);
-    }
+      alert(err instanceof Error ? err.message : 'Não foi possível enviar o currículo.');
+    } finally { setIsSubmitting(false); }
   };
 
   const handleCopyPortalLink = () => {
