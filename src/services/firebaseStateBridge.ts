@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { tenantIdFrom, withTenantAliases } from '../lib/tenant';
 
@@ -35,7 +35,6 @@ async function tenantDocs(name: string, companyId: string): Promise<Map<string, 
       const snap = await getDocs(query(collection(db, name), where(field, '==', companyId)));
       snap.forEach(d => found.set(d.id, { id: d.id, ...d.data() }));
     } catch (error) {
-      // Older collections may not have every tenant alias. Try the next alias.
       console.debug(`[Firestore] tenant query skipped ${name}.${field}`, error);
     }
   }
@@ -64,23 +63,20 @@ class FirebaseStateBridge {
 
   async persistTenantState(companyId: string, state: TenantState): Promise<void> {
     if (!companyId) return;
+    // IMPORTANT: this bridge only UPSERTS loaded/changed documents.
+    // It never infers deletion from an absent local record, because another user/tab
+    // may have created data after this client hydrated. Explicit deletes must use a
+    // dedicated delete operation with the exact document id.
     for (const key of Object.keys(COLLECTION_MAP) as Key[]) {
       const collectionName = COLLECTION_MAP[key];
       const raw = Array.isArray(state[key]) ? state[key]! : [];
       const items = raw.filter((item: any) => key === 'empresas' ? item.id === companyId : tenantIdFrom(item) === companyId);
-      const wanted = new Set<string>();
       for (const item of items) {
         if (!item?.id) continue;
-        wanted.add(String(item.id));
         const payload = key === 'empresas'
           ? { ...item, empresa_id: companyId, empresaId: companyId, companyId }
           : withTenantAliases(item, companyId);
         await setDoc(doc(db, collectionName, String(item.id)), payload, { merge: true });
-      }
-      if (key === 'empresas') continue;
-      const existing = await tenantDocs(collectionName, companyId);
-      for (const id of existing.keys()) {
-        if (!wanted.has(id)) await deleteDoc(doc(db, collectionName, id));
       }
     }
   }
