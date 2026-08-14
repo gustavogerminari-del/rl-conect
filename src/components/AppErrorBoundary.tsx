@@ -2,8 +2,9 @@ import React from 'react';
 import { AlertTriangle, RefreshCcw, Trash2 } from 'lucide-react';
 
 type State = { hasError: boolean; message: string };
+type Props = { children?: React.ReactNode };
 
-export class AppErrorBoundary extends React.Component<React.PropsWithChildren, State> {
+export class AppErrorBoundary extends React.Component<Props, State> {
   state: State = { hasError: false, message: '' };
 
   static getDerivedStateFromError(error: Error): State {
