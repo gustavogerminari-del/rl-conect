@@ -38,3 +38,12 @@ jobs:
             echo 'Legacy/fake runtime reference detected' >&2
             exit 1
           fi
+      - name: Repository hygiene
+        run: |
+          forbidden='scripts/apply-firebase-business-flows.py scripts/apply-firebase-v49-recovery.py scripts/apply-google-firebase-backend.py scripts/apply-public-firebase-api.py scripts/apply-two-access-fixes.py scripts/finalize-firebase-master.py scripts/fix-company-module-dedupe.py scripts/remove-fake-meet-seeds.py'
+          for file in $forbidden; do
+            if [ -e "$file" ]; then echo "One-time migration artifact remains: $file" >&2; exit 1; fi
+          done
+          count=$(find .github/workflows -maxdepth 1 -type f | wc -l | tr -d ' ')
+          echo "Permanent workflow count: $count"
+          test -f .github/workflows/qa-two-access-flows.yml
