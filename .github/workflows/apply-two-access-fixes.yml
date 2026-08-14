@@ -1,0 +1,36 @@
+name: Apply Two Access Firebase Fixes
+on:
+  push:
+    branches: [agent/firebase-v49-recovery]
+    paths:
+      - scripts/apply-two-access-fixes.py
+      - .github/workflows/apply-two-access-fixes.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/firebase-v49-recovery
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python scripts/apply-two-access-fixes.py
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+      - run: npx tsx scripts/qa-two-access-flows.ts
+      - name: Commit fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.ts src/services/dataService.ts src/components/views/AiScreeningView.tsx src/components/views/HeadhunterView.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: complete Firebase recruitment and headhunter access flows"
+          git push origin HEAD:agent/firebase-v49-recovery
