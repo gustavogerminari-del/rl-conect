@@ -14,6 +14,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
+import { isValidCpfForAdmission } from '../../services/businessRules';
 import { Funcionario } from '../../types';
 
 export const DepartamentoPessoalView: React.FC = () => {
@@ -30,6 +31,7 @@ export const DepartamentoPessoalView: React.FC = () => {
   const [cargoFunc, setCargoFunc] = useState('');
   const [departamentoFunc, setDepartamentoFunc] = useState('Tecnologia');
   const [salarioFunc, setSalarioFunc] = useState(9500);
+  const [formError, setFormError] = useState('');
 
   const refreshData = () => {
     setFuncionarios(dataService.getFuncionarios());
@@ -39,7 +41,10 @@ export const DepartamentoPessoalView: React.FC = () => {
 
   const handleCreateFuncionario = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nomeFunc || !cpfFunc) return;
+    setFormError('');
+    if (!nomeFunc.trim()) { setFormError('Informe o nome completo do colaborador.'); return; }
+    if (!isValidCpfForAdmission(cpfFunc)) { setFormError('Informe um CPF no formato 000.000.000-00 ou apenas 11 dígitos.'); return; }
+    if (!Number.isFinite(salarioFunc) || salarioFunc <= 0) { setFormError('Informe um salário maior que zero para concluir a admissão.'); return; }
 
     dataService.createFuncionario({
       nome: nomeFunc,
@@ -56,6 +61,7 @@ export const DepartamentoPessoalView: React.FC = () => {
     setNomeFunc('');
     setCpfFunc('');
     setCargoFunc('');
+    setFormError('');
     refreshData();
   };
 
@@ -169,10 +175,12 @@ export const DepartamentoPessoalView: React.FC = () => {
                 <button onClick={() => {
                   const cpf = window.prompt('Informe o CPF do colaborador para concluir a admissão:') || '';
                   if (!cpf.trim()) return;
+                  if (!isValidCpfForAdmission(cpf)) { window.alert('CPF inválido. Use 000.000.000-00 ou apenas 11 dígitos.'); return; }
                   const salarioStr = window.prompt('Informe o salário de admissão:', String(adm.salario_sugerido || 0)) || '';
-                  const salario = Number(salarioStr.replace(',', '.'));
+                  const salario = Number(salarioStr.replace(/\./g, '').replace(',', '.'));
+                  if (!Number.isFinite(salario) || salario <= 0) { window.alert('Salário inválido. Informe um valor maior que zero.'); return; }
                   const result = dataService.concluirAdmissao(adm.id, cpf, salario);
-                  if (!result) window.alert('Não foi possível concluir a admissão. Confira CPF e salário.');
+                  if (!result) window.alert('Não foi possível concluir a admissão. Os dados continuam pendentes para correção; nada foi perdido.');
                   refreshData();
                 }} className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white hover:bg-emerald-700">Concluir admissão no DP</button>
               </div>
@@ -316,6 +324,8 @@ export const DepartamentoPessoalView: React.FC = () => {
                   className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
+
+              {formError && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700">{formError}</div>}
 
               <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-100">
                 <button

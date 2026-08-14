@@ -13,6 +13,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
+import { parseFeeRule } from '../../services/businessRules';
 import { Cliente, Vaga } from '../../types';
 
 export const HeadhunterView: React.FC = () => {
@@ -28,7 +29,8 @@ export const HeadhunterView: React.FC = () => {
   const [nomeCliente, setNomeCliente] = useState('');
   const [cnpjCliente, setCnpjCliente] = useState('');
   const [responsavelCliente, setResponsavelCliente] = useState('');
-  const [taxaCliente, setTaxaCliente] = useState('20% do análogo salarial');
+  const [taxaCliente, setTaxaCliente] = useState('20% do salário');
+  const [clienteError, setClienteError] = useState('');
 
   const refreshData = () => {
     setVagas(dataService.getVagas());
@@ -37,7 +39,11 @@ export const HeadhunterView: React.FC = () => {
 
   const handleCreateCliente = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nomeCliente || !cnpjCliente) return;
+    setClienteError('');
+    if (!nomeCliente.trim()) { setClienteError('Informe o nome da empresa cliente.'); return; }
+    const documento = cnpjCliente.replace(/\D/g, '');
+    if (documento.length !== 14) { setClienteError('Informe um CNPJ com 14 dígitos.'); return; }
+    if (!parseFeeRule(taxaCliente)) { setClienteError('Configure um fee válido e maior que zero. Exemplos: 35%, R$ 1.750 fixo ou 1,5x salário.'); return; }
 
     dataService.createCliente({
       nome: nomeCliente,
@@ -54,6 +60,8 @@ export const HeadhunterView: React.FC = () => {
     setNomeCliente('');
     setCnpjCliente('');
     setResponsavelCliente('');
+    setTaxaCliente('20% do salário');
+    setClienteError('');
     refreshData();
   };
 
@@ -128,7 +136,8 @@ export const HeadhunterView: React.FC = () => {
                 <div>
                   <h3 className="font-extrabold text-slate-900">{c.candidato_nome}</h3>
                   <p className="text-slate-500">Regra: {c.regra_fee || 'Pendente'}</p>
-                  <p className="mt-2 text-base font-black text-emerald-700">{c.valor ? `R$ ${Number(c.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Fee não configurado'}</p>
+                  <p className="mt-2 text-base font-black text-emerald-700">{c.valor ? `R$ ${Number(c.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Aguardando dados comerciais'}</p>
+                  {!c.valor && <p className="mt-1 text-amber-700">Revise salário e fee da vaga. A contratação permanece salva e não gera cobrança incorreta.</p>}
                 </div>
                 <span className={`rounded-full px-3 py-1 text-[10px] font-extrabold ${c.status === 'AGUARDANDO_COBRANCA' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{c.status}</span>
               </div>
@@ -249,6 +258,21 @@ export const HeadhunterView: React.FC = () => {
                   className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:border-indigo-500 focus:outline-none"
                 />
               </div>
+
+              <div>
+                <label className="font-bold text-slate-700">Fee / Honorário *</label>
+                <input
+                  type="text"
+                  required
+                  value={taxaCliente}
+                  onChange={(e) => setTaxaCliente(e.target.value)}
+                  placeholder="Ex: 35%, R$ 1.750 fixo ou 1,5x salário"
+                  className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:border-indigo-500 focus:outline-none"
+                />
+                <p className="mt-1 text-[10px] text-slate-500">O financeiro só libera AGUARDANDO_COBRANCA quando o fee resultar em valor maior que zero.</p>
+              </div>
+
+              {clienteError && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700">{clienteError}</div>}
 
               <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-100">
                 <button
