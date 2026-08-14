@@ -7,6 +7,7 @@ on:
       - 'server/**'
       - 'server.ts'
       - 'scripts/qa-two-access-flows.ts'
+      - 'scripts/qa-no-duplicate-business-entities.ts'
       - '.github/workflows/qa-two-access-flows.yml'
       - 'package.json'
   workflow_dispatch:
@@ -29,6 +30,8 @@ jobs:
         run: npm run build
       - name: Two-access flow contracts
         run: npx tsx scripts/qa-two-access-flows.ts
+      - name: Global no-duplicate business audit
+        run: npx tsx scripts/qa-no-duplicate-business-entities.ts
       - name: Reject Supabase and fake Meet runtime
         run: |
           if grep -Rni --exclude-dir=node_modules --exclude-dir=.git -E '@supabase|VITE_SUPABASE|meet\.google\.com/(abc-defg-hij|xyz-uvwx-rst)' src server server.ts package.json .env.example; then
