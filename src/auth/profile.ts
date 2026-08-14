@@ -95,11 +95,13 @@ export function toUserProfile(uid: string, raw: RawUserProfile, authData: {
 }): UserProfile {
   const role = normalizeRole(raw.role || raw.tipoUsuario);
   if (!role) throw new Error('Perfil sem papel de acesso (role). Contate o administrador.');
-  const master = role === 'MASTER';
+  const master = isMasterProfile(raw);
   const companyId = getCompanyId(raw);
   if (!master && !companyId) throw new Error('Perfil sem empresa vinculada. Contate o administrador.');
   const status = normalizeRole(raw.status);
-  if (raw.ativo === false || status === 'INATIVO' || status === 'BLOQUEADO') {
+  // MASTER é uma identidade da plataforma, não um usuário de empresa. O acesso
+  // de emergência da plataforma nunca pode ser invalidado por status empresarial.
+  if (!master && (raw.ativo === false || status === 'INATIVO' || status === 'BLOQUEADO')) {
     throw new Error('Esta conta foi desativada pelo administrador.');
   }
   return {

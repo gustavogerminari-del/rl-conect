@@ -45,6 +45,13 @@ type RawUserProfile = Partial<UserProfile> & {
   ativo?: boolean;
 };
 
+const normalizedAccessRole = (value: unknown): string =>
+  String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+
+const isProtectedMasterProfile = (profile?: Partial<RawUserProfile> | null): boolean =>
+  ['MASTER', 'MASTER_ADMIN'].includes(normalizedAccessRole(profile?.role)) ||
+  ['MASTER', 'MASTER_ADMIN'].includes(normalizedAccessRole(profile?.tipoUsuario));
+
 const normalizeProfile = (uid: string, raw: RawUserProfile): UserProfile => ({
   uid,
   email: String(raw.email || '').trim().toLowerCase(),
@@ -347,6 +354,10 @@ export class UserService {
       const normalizedRole = role.toUpperCase().replace(/[\s-]+/g, '_');
       const isMaster = normalizedRole === 'MASTER' || normalizedRole === 'MASTER_ADMIN';
       const currentIsMaster = ['MASTER', 'MASTER_ADMIN'].includes(String(current.role || '').toUpperCase().replace(/[\s-]+/g, '_'));
+      const requestedStatus = normalizedAccessRole(data.status ?? current.status);
+      if (currentIsMaster && ['INATIVO', 'BLOQUEADO', 'SUSPENSO', 'DESATIVADO'].includes(requestedStatus)) {
+        throw new Error('O acesso MASTER é protegido e não pode ser bloqueado ou desativado.');
+      }
       if (isMaster !== currentIsMaster) {
         throw new Error('A promoção ou remoção do perfil master_admin exige backend administrativo seguro.');
       }
@@ -397,6 +408,10 @@ export class UserService {
 
   static async delete(uid: string): Promise<void> {
     try {
+      const current = await this.getById(uid);
+      if (isProtectedMasterProfile(current)) {
+        throw new Error('O acesso MASTER é protegido e não pode ser excluído.');
+      }
       await authorizedRequest(`/api/users/${encodeURIComponent(uid)}`, { method: 'DELETE' });
       await AuditService.log({
         action: 'DELETE',
@@ -435,7 +450,9 @@ export class UserService {
       if (!snap.empty) {
         const list: UserProfile[] = [];
         snap.forEach(d => list.push(normalizeProfile(d.id, d.data() as RawUserProfile)));
-        return list;
+        // Consultas de uma empresa jamais recebem identidades da plataforma,
+        // mesmo que um documento MASTER tenha sido vinculado por engano.
+        return companyId ? list.filter(user => !isProtectedMasterProfile(user)) : list;
       }
     } catch (err) {
       console.warn('Erro em UserService.list:', err);

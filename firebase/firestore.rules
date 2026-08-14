@@ -15,8 +15,13 @@ service cloud.firestore {
     function masterRole(value) {
       return value in ['master_admin', 'MASTER_ADMIN', 'MASTER', 'SUPER_ADMINISTRADOR', 'Super Administrador'];
     }
+    function profileIsMaster(data) {
+      return data != null && (masterRole(data.role) || masterRole(data.tipoUsuario));
+    }
     function master() {
-      return active() && (
+      // A identidade MASTER pertence à plataforma e não pode ser derrubada por
+      // status, empresa ou alteração feita por um usuário de tenant.
+      return signedIn() && (
         (hasPrimary() && (masterRole(primary().role) || masterRole(primary().tipoUsuario))) ||
         (hasLegacy() && (masterRole(legacy().role) || masterRole(legacy().tipoUsuario)))
       );
@@ -273,14 +278,14 @@ service cloud.firestore {
     match /_health/{id} { allow read: if true; allow write: if false; }
 
     match /usuarios/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || master() || sameTenant(resource.data));
+      allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsMaster(resource.data)));
       allow create, delete: if master();
-      allow update: if master() || (companyManager() && sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow update: if master() || (companyManager() && !profileIsMaster(resource.data) && !profileIsMaster(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
     }
     match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || master() || sameTenant(resource.data));
+      allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsMaster(resource.data)));
       allow create, delete: if master();
-      allow update: if master() || (companyManager() && sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow update: if master() || (companyManager() && !profileIsMaster(resource.data) && !profileIsMaster(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
     }
     match /empresas/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
     match /companies/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
