@@ -51,6 +51,14 @@ function saveToStorage<T>(key: string, value: T): void {
   }
 }
 
+function normalizeDocument(value?: string): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function normalizeEmail(value?: string): string {
+  return String(value || '').trim().toLowerCase();
+}
+
 // Initial Seed Data
 const initialEmpresas: Empresa[] = [
   {
@@ -861,6 +869,15 @@ class DataService {
   }
 
   public createEmpresa(data: Omit<Empresa, 'id' | 'criado_em'>): Empresa {
+    const document = normalizeDocument(data.cnpj);
+    const existing = document ? this.empresas.find((e) => normalizeDocument(e.cnpj) === document) : undefined;
+    if (existing) {
+      Object.assign(existing, { ...data, id: existing.id, criado_em: existing.criado_em });
+      this.addLog('EDICAO', `Empresa ${existing.nome} reutilizada por CNPJ; duplicidade evitada.`);
+      this.notify();
+      return existing;
+    }
+
     const newEmp: Empresa = {
       ...data,
       id: 'emp_' + Date.now(),
@@ -995,6 +1012,17 @@ class DataService {
   }
 
   public createCandidato(data: Omit<Candidato, 'id' | 'criado_em' | 'empresa_id'>): Candidato {
+    const email = normalizeEmail(data.email);
+    const existing = this.candidatos.find(
+      (c) => c.empresa_id === this.activeEmpresaId && normalizeEmail(c.email) === email
+    );
+    if (existing) {
+      Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em });
+      this.addLog('EDICAO', `Candidato ${existing.nome} reutilizado por e-mail; duplicidade evitada.`);
+      this.notify();
+      return existing;
+    }
+
     const newCand: Candidato = {
       ...data,
       id: 'cand_' + Date.now(),
@@ -1132,7 +1160,16 @@ class DataService {
       if (candidateData.observacoes) cand.observacoes = candidateData.observacoes;
     }
 
-    // RULE 7: Create candidature with empresa_id, vaga_id, candidato_id, origem = 'portal_vagas'
+    // RULE 7 + IDEMPOTENCY: one candidate can have only one application per job/company.
+    const existingApplication = this.candidaturas.find(
+      (c) => c.empresa_id === empresaTargetId && c.vaga_id === vagaId && c.candidato_id === cand!.id
+    );
+    if (existingApplication) {
+      this.addLog('EDICAO', `Candidatura existente de ${cand.nome} na vaga ${vagaId} reutilizada; duplicidade evitada.`);
+      this.notify();
+      return { candidato: cand, candidatura: existingApplication };
+    }
+
     const candidatura: Candidatura = {
       id: 'cand_app_' + Date.now(),
       empresa_id: empresaTargetId,
@@ -1201,6 +1238,15 @@ class DataService {
     // Find first published vaga or create general talent candidature
     const firstVaga = this.vagas.find((v) => v.empresa_id === empresaTargetId);
     const vagaId = firstVaga ? firstVaga.id : 'banco_talentos';
+
+    const existingTalentApplication = this.candidaturas.find(
+      (c) => c.empresa_id === empresaTargetId && c.candidato_id === cand!.id && c.origem === 'banco_talentos_portal'
+    );
+    if (existingTalentApplication) {
+      this.addLog('EDICAO', `Cadastro existente de ${cand.nome} no Banco de Talentos reutilizado; duplicidade evitada.`);
+      this.notify();
+      return { candidato: cand, candidatura: existingTalentApplication };
+    }
 
     const candidatura: Candidatura = {
       id: 'cand_app_' + Date.now(),
@@ -1299,6 +1345,18 @@ class DataService {
   }
 
   public createEntrevista(data: Omit<Entrevista, 'id' | 'criado_em' | 'empresa_id'>): Entrevista {
+    const existing = this.entrevistas.find(
+      (e) =>
+        e.empresa_id === this.activeEmpresaId &&
+        e.candidatura_id === data.candidatura_id &&
+        e.data_hora === data.data_hora &&
+        e.status !== 'cancelada'
+    );
+    if (existing) {
+      this.addLog('EDICAO', `Entrevista ${existing.id} reutilizada; agendamento duplicado evitado.`);
+      return existing;
+    }
+
     const newEnt: Entrevista = {
       ...data,
       id: 'ent_' + Date.now(),
@@ -1318,6 +1376,17 @@ class DataService {
   }
 
   public createCliente(data: Omit<Cliente, 'id' | 'criado_em' | 'empresa_id'>): Cliente {
+    const document = normalizeDocument(data.cnpj_cpf);
+    const existing = document
+      ? this.clientes.find((c) => c.empresa_id === this.activeEmpresaId && normalizeDocument(c.cnpj_cpf) === document)
+      : undefined;
+    if (existing) {
+      Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em });
+      this.addLog('EDICAO', `Cliente Headhunter ${existing.nome} reutilizado por documento; duplicidade evitada.`);
+      this.notify();
+      return existing;
+    }
+
     const newCli: Cliente = {
       ...data,
       id: 'cli_' + Date.now(),
@@ -1336,6 +1405,20 @@ class DataService {
   }
 
   public createFuncionario(data: Partial<Funcionario> & { nome: string; cpf: string; email: string; salario: number }): Funcionario {
+    const cpf = normalizeDocument(data.cpf);
+    const email = normalizeEmail(data.email);
+    const existing = this.funcionarios.find(
+      (f) =>
+        f.empresa_id === this.activeEmpresaId &&
+        ((cpf && normalizeDocument(f.cpf) === cpf) || (email && normalizeEmail(f.email) === email))
+    );
+    if (existing) {
+      Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em });
+      this.addLog('EDICAO', `Funcionário ${existing.nome} reutilizado por CPF/e-mail; duplicidade evitada.`);
+      this.notify();
+      return existing;
+    }
+
     const newFunc: Funcionario = {
       cargo_id: 'cargo_1',
       cargo_nome: data.cargo || 'Analista',
