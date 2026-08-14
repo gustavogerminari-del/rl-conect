@@ -22,6 +22,10 @@ const COLLECTION_MAP = {
   pagamentos: 'pagamentos',
   admissoesPendentes: 'solicitacoes_admissao',
   cobrancasHeadhunter: 'financeiro_cobrancas',
+  builderModules: 'ai_builder_modules',
+  builderVersions: 'ai_builder_versions',
+  aiLogs: 'ai_logs',
+  aiSettings: 'ai_settings',
 } as const;
 
 type Key = keyof typeof COLLECTION_MAP;
@@ -63,10 +67,8 @@ class FirebaseStateBridge {
 
   async persistTenantState(companyId: string, state: TenantState): Promise<void> {
     if (!companyId) return;
-    // IMPORTANT: this bridge only UPSERTS loaded/changed documents.
-    // It never infers deletion from an absent local record, because another user/tab
-    // may have created data after this client hydrated. Explicit deletes must use a
-    // dedicated delete operation with the exact document id.
+    // Upsert only. Never delete a Firestore document merely because this browser
+    // did not load it, avoiding data loss in concurrent multi-user sessions.
     for (const key of Object.keys(COLLECTION_MAP) as Key[]) {
       const collectionName = COLLECTION_MAP[key];
       const raw = Array.isArray(state[key]) ? state[key]! : [];
