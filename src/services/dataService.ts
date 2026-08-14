@@ -921,10 +921,25 @@ class DataService {
   }
 
   public createVaga(data: Omit<Vaga, 'id' | 'criado_em' | 'empresa_id'>): Vaga {
-    const user = this.getCurrentUser();
+    const titleKey = String(data.titulo || '').trim().toLowerCase();
+    const originKey = data.modulo_origem || 'recrutamento';
+    const clientKey = data.cliente_id || '';
+    const existing = this.vagas.find(v =>
+      v.empresa_id === this.activeEmpresaId &&
+      String(v.titulo || '').trim().toLowerCase() === titleKey &&
+      (v.modulo_origem || 'recrutamento') === originKey &&
+      (v.cliente_id || '') === clientKey &&
+      v.status !== 'encerrada'
+    );
+    if (existing) {
+      Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em });
+      this.addLog('EDICAO', `Vaga "${existing.titulo}" reutilizada; duplicidade evitada.`);
+      this.notify();
+      return existing;
+    }
     const newVaga: Vaga = {
       ...data,
-      id: 'vaga_' + Date.now(),
+      id: stableEntityId('vaga', `${this.activeEmpresaId}:${originKey}:${clientKey}:${titleKey}:${Date.now()}`),
       empresa_id: this.activeEmpresaId,
       criado_em: new Date().toISOString(),
     };
@@ -1346,15 +1361,46 @@ class DataService {
   }
 
   public createUsuario(data: Omit<Usuario, 'id' | 'criado_em'>): Usuario {
+    const email = normalizeEmail(data.email);
+    if (!email) throw new Error('E-mail do usuário é obrigatório.');
+    const existing = this.usuarios.find(u => normalizeEmail(u.email) === email);
+    if (existing) {
+      if (existing.empresa_id && data.empresa_id && existing.empresa_id !== data.empresa_id) {
+        throw new Error('Este e-mail já pertence a outra empresa.');
+      }
+      Object.assign(existing, { ...data, id: existing.id, criado_em: existing.criado_em, email });
+      this.addLog('EDICAO', `Usuário ${existing.nome} (${existing.email}) reutilizado por e-mail.`);
+      this.notify();
+      return existing;
+    }
     const newUsr: Usuario = {
       ...data,
-      id: 'usr_' + Date.now(),
+      email,
+      id: stableEntityId('usr', email),
       criado_em: new Date().toISOString(),
     };
     this.usuarios.push(newUsr);
     this.addLog('CRIACAO', `Usuário ${newUsr.nome} (${newUsr.email}) criado.`);
     this.notify();
     return newUsr;
+  }
+
+  public async createFirebaseAccess(data: Omit<Usuario, 'id' | 'criado_em'>, password: string): Promise<Usuario> {
+    const token = await firebaseSessionService.idToken();
+    if (!token) throw new Error('Sessão Firebase obrigatória para criar acessos.');
+    const response = await fetch('/api/admin/users', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...data, companyId: data.empresa_id, password }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.user) throw new Error(result?.error || 'Não foi possível criar o acesso Firebase.');
+    const user = result.user as Usuario;
+    const local = this.usuarios.find(u => normalizeEmail(u.email) === normalizeEmail(user.email));
+    if (local) Object.assign(local, user);
+    else this.usuarios.push(user);
+    this.notify();
+    return user;
   }
 
   // --- CONSTRUTOR MASTER COM IA METHODS ---

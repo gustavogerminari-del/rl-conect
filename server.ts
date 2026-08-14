@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { googleWorkspaceConfigured, registerGoogleWorkspaceRoutes } from './server/googleWorkspaceRoutes.js';
+import { registerAdminUserRoutes } from './server/adminUserRoutes.js';
 import { registerPublicApplicationsRoutes } from './server/publicApplicationsRoutes.js';
 
 dotenv.config();
@@ -17,6 +18,7 @@ app.use(express.json({ limit: '10mb' }));
 // APIs are registered before Vite so OAuth callbacks and public application writes
 // are never swallowed by the SPA. Public writes are validated by Firebase Admin.
 registerGoogleWorkspaceRoutes(app);
+registerAdminUserRoutes(app);
 registerPublicApplicationsRoutes(app);
 
 // Initialize Gemini Client
