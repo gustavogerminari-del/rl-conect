@@ -1,0 +1,474 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function hasPrimary() { return signedIn() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)); }
+    function hasLegacy() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function primary() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data; }
+    function legacy() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() {
+      return signedIn() && (hasPrimary() || hasLegacy())
+        && (!hasPrimary() || (primary().ativo != false && primary().status != 'Inativo' && primary().status != 'Bloqueado'))
+        && (!hasLegacy() || (legacy().ativo != false && legacy().status != 'Inativo' && legacy().status != 'Bloqueado'));
+    }
+    function masterRole(value) {
+      return value in ['master_admin', 'MASTER_ADMIN', 'MASTER', 'SUPER_ADMINISTRADOR', 'Super Administrador'];
+    }
+    function master() {
+      return active() && (
+        (hasPrimary() && (masterRole(primary().role) || masterRole(primary().tipoUsuario))) ||
+        (hasLegacy() && (masterRole(legacy().role) || masterRole(legacy().tipoUsuario)))
+      );
+    }
+    function companyManagerRole(value) {
+      return value in [
+        'ADMIN_EMPRESA', 'ADMIN', 'ADMINISTRADOR', 'Administrador',
+        'ADMINISTRADOR_EMPRESA', 'Administrador da Empresa',
+        'EMPRESA_ADMIN', 'GESTOR_EMPRESA', 'EMPRESA',
+        'RH', 'DP', 'GESTOR', 'HEADHUNTER', 'RECRUTADOR', 'FINANCEIRO',
+        'RECRUTAMENTO', 'Recrutamento',
+        'RECRUTAMENTO_HEADHUNTER', 'RECRUTAMENTO / HEADHUNTER',
+        'RECRUTAMENTO/HEADHUNTER', 'Recrutamento / Headhunter',
+        'RECRUTADOR_SÊNIOR', 'Recrutador Sênior', 'RECRUTADOR SENIOR',
+        'ANALISTA_DE_RH', 'Analista de RH', 'ANALISTA RH',
+        'GESTOR_DE_SELEÇÃO', 'Gestor de Seleção', 'GESTOR DE SELECAO'
+      ];
+    }
+    function companyManager() {
+      return active() && (
+        (hasPrimary() && (companyManagerRole(primary().role) || companyManagerRole(primary().tipoUsuario))) ||
+        (hasLegacy() && (companyManagerRole(legacy().role) || companyManagerRole(legacy().tipoUsuario)))
+      );
+    }
+    function companyAdminRole(value) {
+      return value in [
+        'ADMIN_EMPRESA', 'ADMIN', 'ADMINISTRADOR', 'Administrador',
+        'ADMINISTRADOR_EMPRESA', 'Administrador da Empresa',
+        'EMPRESA_ADMIN', 'GESTOR_EMPRESA'
+      ];
+    }
+    function companyAdmin() {
+      return active() && (
+        (hasPrimary() && (companyAdminRole(primary().role) || companyAdminRole(primary().tipoUsuario))) ||
+        (hasLegacy() && (companyAdminRole(legacy().role) || companyAdminRole(legacy().tipoUsuario)))
+      );
+    }
+    function headhunterRole(value) {
+      return value in [
+        'HEADHUNTER', 'Headhunter', 'RECRUTADOR', 'Recrutador',
+        'RECRUTAMENTO', 'Recrutamento',
+        'RECRUTAMENTO_HEADHUNTER', 'RECRUTAMENTO / HEADHUNTER',
+        'RECRUTAMENTO/HEADHUNTER', 'Recrutamento / Headhunter',
+        'RECRUTADOR_SÊNIOR', 'Recrutador Sênior', 'RECRUTADOR SENIOR',
+        'ANALISTA_DE_RH', 'Analista de RH', 'ANALISTA RH',
+        'GESTOR_DE_SELEÇÃO', 'Gestor de Seleção', 'GESTOR DE SELECAO'
+      ];
+    }
+    function profilePermission(data, permission) {
+      return ('permissions' in data && data.permissions is list && permission in data.permissions)
+        || ('permissions' in data && data.permissions is map && permission in data.permissions && data.permissions[permission] == true)
+        || ('permissoes' in data && data.permissoes is list && permission in data.permissoes)
+        || ('permissoes' in data && data.permissoes is map && permission in data.permissoes && data.permissoes[permission] == true);
+    }
+    function profilePermissionConfigured(data, permission) {
+      return ('permissions' in data && data.permissions is list && permission in data.permissions)
+        || ('permissions' in data && data.permissions is map && permission in data.permissions)
+        || ('permissoes' in data && data.permissoes is list && permission in data.permissoes)
+        || ('permissoes' in data && data.permissoes is map && permission in data.permissoes);
+    }
+    function permissionConfigured(permission) {
+      return active() && (
+        (hasPrimary() && profilePermissionConfigured(primary(), permission)) ||
+        (hasLegacy() && profilePermissionConfigured(legacy(), permission))
+      );
+    }
+    function hasPermission(permission) {
+      return active() && (
+        hasPrimary() && profilePermissionConfigured(primary(), permission)
+          ? profilePermission(primary(), permission)
+          : hasLegacy() && profilePermissionConfigured(legacy(), permission)
+            ? profilePermission(legacy(), permission)
+            : false
+      );
+    }
+    function hasHeadhunterRole() {
+      return active() && (
+        (hasPrimary() && (headhunterRole(primary().role) || headhunterRole(primary().tipoUsuario))) ||
+        (hasLegacy() && (headhunterRole(legacy().role) || headhunterRole(legacy().tipoUsuario)))
+      );
+    }
+    function profileModuleEnabled(data, moduleKey) {
+      return ('modules' in data && data.modules is map && moduleKey in data.modules && data.modules[moduleKey] == true)
+        || ('modulos' in data && data.modulos is map && moduleKey in data.modulos && data.modulos[moduleKey] == true)
+        || profilePermission(data, moduleKey);
+    }
+    function profileHeadhunterFinanceEnabled(data) {
+      return profileModuleEnabled(data, 'financeiroHeadhunter')
+        || profileModuleEnabled(data, 'financeiro_headhunter')
+        || profileModuleEnabled(data, 'financeiroheadhunter')
+        || profileModuleEnabled(data, 'headhunter-financeiro')
+        || profileModuleEnabled(data, 'headhunter_financeiro')
+        || profileModuleEnabled(data, 'enviar_cobranca');
+    }
+    function hasAssignedHeadhunterAccess() {
+      return active() && (
+        (hasPrimary() && (profileModuleEnabled(primary(), 'headhunter') || profileHeadhunterFinanceEnabled(primary()))) ||
+        (hasLegacy() && (profileModuleEnabled(legacy(), 'headhunter') || profileHeadhunterFinanceEnabled(legacy()))) ||
+        hasHeadhunterRole()
+      );
+    }
+    function tenantId() {
+      return hasPrimary() && primary().empresaId is string && primary().empresaId != '' ? primary().empresaId
+        : hasPrimary() && primary().companyId is string && primary().companyId != '' ? primary().companyId
+        : hasPrimary() && primary().tenantId is string && primary().tenantId != '' ? primary().tenantId
+        : hasLegacy() && legacy().empresaId is string && legacy().empresaId != '' ? legacy().empresaId
+        : hasLegacy() && legacy().companyId is string && legacy().companyId != '' ? legacy().companyId
+        : hasLegacy() && legacy().tenantId is string && legacy().tenantId != '' ? legacy().tenantId
+        : '';
+    }
+    function dataTenant(data) {
+      return data.empresaId is string && data.empresaId != '' ? data.empresaId
+        : data.companyId is string && data.companyId != '' ? data.companyId
+        : data.tenantId is string && data.tenantId != '' ? data.tenantId
+        : '';
+    }
+    function sameTenant(data) { return active() && tenantId() != '' && dataTenant(data) == tenantId(); }
+    function tenantIsTrial(companyId) {
+      let companyPath = /databases/$(database)/documents/empresas/$(companyId);
+      return exists(companyPath) && (
+        get(companyPath).data.status == 'Em Teste (Trial)' ||
+        get(companyPath).data.status == 'Trial' ||
+        get(companyPath).data.plano == 'trial'
+      );
+    }
+    function tenantModuleEnabled(companyId, moduleKey) {
+      let modulePath = /databases/$(database)/documents/empresa_modulos/$(companyId);
+      let companyPath = /databases/$(database)/documents/empresas/$(companyId);
+      return (exists(modulePath) && (
+          ('modulos' in get(modulePath).data && get(modulePath).data.modulos is map && get(modulePath).data.modulos[moduleKey] == true)
+          || ('modules' in get(modulePath).data && get(modulePath).data.modules is map && get(modulePath).data.modules[moduleKey] == true)
+          || (moduleKey in get(modulePath).data && get(modulePath).data[moduleKey] == true)
+        ))
+        || (exists(companyPath) && (
+          ('modulos' in get(companyPath).data && get(companyPath).data.modulos is map && get(companyPath).data.modulos[moduleKey] == true)
+          || ('modules' in get(companyPath).data && get(companyPath).data.modules is map && get(companyPath).data.modules[moduleKey] == true)
+          || ('rawTenantData' in get(companyPath).data
+            && get(companyPath).data.rawTenantData is map
+            && 'modules' in get(companyPath).data.rawTenantData
+            && get(companyPath).data.rawTenantData.modules is map
+            && get(companyPath).data.rawTenantData.modules[moduleKey] == true)
+        ));
+    }
+    function hasHeadhunterModuleAccess() {
+      return tenantId() != '' && (
+        tenantModuleEnabled(tenantId(), 'headhunter') ||
+        tenantModuleEnabled(tenantId(), 'financeiroHeadhunter') ||
+        tenantModuleEnabled(tenantId(), 'financeiro_headhunter') ||
+        tenantModuleEnabled(tenantId(), 'financeiroheadhunter') ||
+        tenantModuleEnabled(tenantId(), 'headhunter-financeiro') ||
+        tenantModuleEnabled(tenantId(), 'headhunter_financeiro') ||
+        tenantModuleEnabled(tenantId(), 'enviar_cobranca')
+      ) && hasAssignedHeadhunterAccess();
+    }
+    function canViewHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.visualizar')
+        || hasPermission('headhunter.financeiro.editar')
+        || hasPermission('headhunter.financeiro.encaminhar')
+        || hasPermission('headhunter.financeiro.cobrar')
+        || (!permissionConfigured('headhunter.financeiro.visualizar') && hasHeadhunterModuleAccess());
+    }
+    function canEditHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.editar')
+        || hasPermission('headhunter.financeiro.encaminhar')
+        || hasPermission('headhunter.financeiro.cobrar')
+        || (!permissionConfigured('headhunter.financeiro.editar') && hasHeadhunterModuleAccess());
+    }
+    function canForwardHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.encaminhar')
+        || (!permissionConfigured('headhunter.financeiro.encaminhar') && hasHeadhunterModuleAccess());
+    }
+    function canChargeHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.cobrar')
+        || (!permissionConfigured('headhunter.financeiro.cobrar') && hasAssignedHeadhunterAccess());
+    }
+    function talentBankEnabled(companyId) {
+      return companyId != '' && !tenantIsTrial(companyId) && tenantModuleEnabled(companyId, 'bancoTalentos');
+    }
+    function tenantCreate(data) { return dataTenant(data) != '' && (master() || sameTenant(data)); }
+    function publicJob(data) {
+      return data.publicada == true && dataTenant(data) != ''
+        && (data.status == 'Aberta' || data.status == 'Ativa' || data.status == 'ativa');
+    }
+    function publicJobOwner(jobId, companyId) {
+      return jobId is string && jobId != '' && companyId is string && companyId != ''
+        && exists(/databases/$(database)/documents/vagas/$(jobId))
+        && publicJob(get(/databases/$(database)/documents/vagas/$(jobId)).data)
+        && dataTenant(get(/databases/$(database)/documents/vagas/$(jobId)).data) == companyId;
+    }
+    function validApplication(data) {
+      return data.candidateId is string && data.candidateId != ''
+        && publicJobOwner(data.jobId, dataTenant(data));
+    }
+    function validPublicCandidate(data) {
+      return data.name is string && data.name != '' && data.email is string && data.email != ''
+        && publicJobOwner(data.currentJobId, dataTenant(data));
+    }
+    function linkedHiringExists(data) {
+      return data.contratacaoId is string && data.contratacaoId != ''
+        && existsAfter(/databases/$(database)/documents/contratacoes/$(data.contratacaoId))
+        && dataTenant(getAfter(/databases/$(database)/documents/contratacoes/$(data.contratacaoId)).data) == dataTenant(data);
+    }
+    function validBillingId(id, data) {
+      return data.contratacaoId is string && data.contratacaoId != ''
+        && id == 'cob_' + data.contratacaoId;
+    }
+    function linkedClientExists(data) {
+      return data.clienteId is string && data.clienteId != ''
+        && existsAfter(/databases/$(database)/documents/clientes_headhunter/$(data.clienteId))
+        && dataTenant(getAfter(/databases/$(database)/documents/clientes_headhunter/$(data.clienteId)).data) == dataTenant(data);
+    }
+    function headhunterAuditId(id) {
+      return id.matches('^dados_comerciais_.*') || id.matches('^encaminhamento_financeiro_.*');
+    }
+    function validHeadhunterAudit(id, data) {
+      return headhunterAuditId(id)
+        && data.empresaId is string && data.empresaId != ''
+        && data.companyId is string && data.companyId == data.empresaId
+        && data.userId is string && data.userId != ''
+        && data.contratacaoId is string && data.contratacaoId != ''
+        && data.cobrancaId is string && data.cobrancaId != ''
+        && data.createdAt is string && data.createdAt != '';
+    }
+    function financialHiringFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'clienteId', 'clientId', 'clienteNome', 'remuneracaoCombinada',
+        'tipoCobranca', 'feePercentual', 'feeFixo', 'valorFee',
+        'dataVencimento', 'observacoesComerciais', 'cobrancaId', 'financeiroId',
+        'destino', 'destinoContratacao', 'destinoProcesso', 'encaminhadoPara',
+        'encaminhadoFinanceiro', 'encaminhadoFinanceiroEm', 'statusFinanceiro',
+        'statusProcesso', 'statusEncaminhamento'
+      ]);
+    }
+    function billingMovesToForwarded() {
+      return request.resource.data.status == 'AGUARDANDO_COBRANCA'
+        && resource.data.status != 'AGUARDANDO_COBRANCA';
+    }
+    function billingMovesToChargeStatus() {
+      return request.resource.data.status != resource.data.status
+        && request.resource.data.status in ['FATURADO', 'RECEBIDO', 'FINALIZADO'];
+    }
+    function billingUpdatePermission() {
+      return billingMovesToChargeStatus()
+        ? canChargeHeadhunterFinance()
+        : billingMovesToForwarded()
+          ? canForwardHeadhunterFinance()
+          : canEditHeadhunterFinance();
+    }
+
+    match /_health/{id} { allow read: if true; allow write: if false; }
+
+    match /usuarios/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || master() || sameTenant(resource.data));
+      allow create, delete: if master();
+      allow update: if master() || (companyManager() && sameTenant(resource.data) && sameTenant(request.resource.data));
+    }
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || master() || sameTenant(resource.data));
+      allow create, delete: if master();
+      allow update: if master() || (companyManager() && sameTenant(resource.data) && sameTenant(request.resource.data));
+    }
+    match /empresas/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
+    match /companies/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
+    match /tenants/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
+
+    match /vagas/{id} {
+      allow read: if publicJob(resource.data) || master() || sameTenant(resource.data);
+      allow create: if tenantCreate(request.resource.data);
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
+    }
+    match /jobs/{id} { allow read: if publicJob(resource.data) || master() || sameTenant(resource.data); allow write: if false; }
+
+    match /candidatos/{id} {
+      allow create: if validPublicCandidate(request.resource.data) || (
+        tenantCreate(request.resource.data)
+        && (request.resource.data.inTalentBank == false || talentBankEnabled(dataTenant(request.resource.data)))
+      );
+      allow read: if master() || (
+        sameTenant(resource.data)
+        && (resource.data.inTalentBank == false || talentBankEnabled(dataTenant(resource.data)))
+      );
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
+    }
+    // Compatibilidade somente de leitura interna com o nome legado. Novas
+    // candidaturas públicas e cadastros operacionais usam `candidatos`.
+    match /candidates/{id} {
+      allow read: if master() || sameTenant(resource.data);
+      allow write: if false;
+    }
+    match /candidaturas/{id} {
+      allow create: if validApplication(request.resource.data) || tenantCreate(request.resource.data);
+      allow read: if master() || sameTenant(resource.data);
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
+    }
+
+    // Clientes comerciais são visíveis e editáveis somente dentro do próprio
+    // tenant. O cliente escolhido na contratação nunca é recebido como texto
+    // livre: precisa existir nesta coleção e pertencer à mesma empresa.
+    match /clientes_headhunter/{id} {
+      allow read: if master() || (canViewHeadhunterFinance() && sameTenant(resource.data));
+      allow create: if tenantCreate(request.resource.data) && canEditHeadhunterFinance();
+      allow update: if master() || (
+        billingUpdatePermission()
+        && sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+      );
+      allow delete: if master() || (canEditHeadhunterFinance() && sameTenant(resource.data));
+    }
+
+    match /contratacoes/{id} {
+      allow read: if master() || sameTenant(resource.data);
+      allow create: if tenantCreate(request.resource.data);
+      allow update: if master() || (
+        sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && (!financialHiringFieldsChanged() || canForwardHeadhunterFinance())
+      );
+      allow delete: if master() || sameTenant(resource.data);
+    }
+
+    // Cobrança principal do Headhunter: sempre determinística, vinculada a uma
+    // contratação existente e restrita ao mesmo tenant do ADMIN_EMPRESA.
+    match /financeiro_cobrancas/{id} {
+      allow read: if master() || (canViewHeadhunterFinance() && sameTenant(resource.data));
+      allow create: if canForwardHeadhunterFinance()
+        && tenantCreate(request.resource.data)
+        && validBillingId(id, request.resource.data)
+        && linkedClientExists(request.resource.data)
+        && linkedHiringExists(request.resource.data);
+      allow update: if master() || (
+        canEditHeadhunterFinance()
+        && sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && request.resource.data.contratacaoId == resource.data.contratacaoId
+        && linkedClientExists(request.resource.data)
+        && linkedHiringExists(request.resource.data)
+      );
+      allow delete: if master() || (canChargeHeadhunterFinance() && sameTenant(resource.data));
+    }
+
+    match /audit_logs/{id} {
+      allow read: if master() || sameTenant(resource.data);
+      allow create: if tenantCreate(request.resource.data) && (
+        !headhunterAuditId(id) || (canForwardHeadhunterFinance() && validHeadhunterAudit(id, request.resource.data))
+      );
+      allow update: if master() || (
+        sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && (!headhunterAuditId(id) || (canForwardHeadhunterFinance() && validHeadhunterAudit(id, request.resource.data)))
+      );
+      allow delete: if master() || sameTenant(resource.data);
+    }
+
+    // Painel Master oficial: dados globais da plataforma nunca podem ser
+    // acessados por uma empresa cliente, mesmo quando a URL é conhecida.
+    match /master_leads/{id} { allow read, write: if master(); }
+    match /master_finance_receivables/{id} { allow read, write: if master(); }
+    match /master_finance_payables/{id} { allow read, write: if master(); }
+    match /master_nfse/{id} { allow read, write: if master(); }
+    match /master_support_tickets/{id} { allow read, write: if master(); }
+    match /master_integrations/{id} { allow read, write: if master(); }
+    match /master_backups/{id} { allow read, write: if master(); }
+    match /master_settings/{id} { allow read, write: if master(); }
+    match /master_idempotency/{id} { allow read, write: if master(); }
+
+    // Segredos OAuth e conteúdo sensível de entrevistas são acessados somente
+    // pelas rotas autenticadas do backend. O service account ignora estas rules.
+    match /google_workspace_integrations/{id} { allow read, write: if false; }
+    match /google_oauth_states/{id} { allow read, write: if false; }
+    match /interview_transcripts/{id} { allow read, write: if false; }
+    match /interview_diagnostics/{id} { allow read, write: if false; }
+
+    match /receitas/{id} {
+      allow read: if master() || (canViewHeadhunterFinance() && sameTenant(resource.data));
+      allow create: if canEditHeadhunterFinance()
+        && tenantCreate(request.resource.data)
+        && request.resource.data.contratacaoId is string
+        && request.resource.data.contratacaoId != ''
+        && linkedHiringExists(request.resource.data);
+      allow update: if master() || (
+        canEditHeadhunterFinance()
+        && sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && request.resource.data.contratacaoId == resource.data.contratacaoId
+        && linkedHiringExists(request.resource.data)
+      );
+      allow delete: if master() || (canChargeHeadhunterFinance() && sameTenant(resource.data));
+    }
+
+    // Somente leitura para a migração compatível. Novas gravações são proibidas.
+    match /candidate_applications/{id} { allow read: if master() || sameTenant(resource.data); allow write: if false; }
+    match /applications/{id} { allow read: if master() || sameTenant(resource.data); allow write: if false; }
+
+    match /{collectionName}/{id} {
+      allow read: if collectionName in [
+        'entrevistas','interviews','agenda','solicitacoes_admissao','colaboradores',
+        'historico_colaborador','funcionarios','employees','internal_team','documentos','documents',
+        'documentos_colaboradores','contratos_trabalho','jornadas','marcacoes_ponto','ajustes_ponto',
+        'banco_horas','beneficios','beneficios_colaboradores','beneficios_catalogo','employee_benefits','ferias_solicitacoes',
+        'historico_beneficios','anotacoes_internas_colaborador','ferias','periodos_aquisitivos',
+        'regras_ferias','afastamentos','cat_registros','inss_processos','retorno_trabalho','alertas_dp',
+        'folhas_pagamento','rescisoes','solicitacoes_portal','chamados_suporte','comunicados_empresa',
+        'documentos_assinatura_portal','organograma_empresa','cargos_salarios','ponto_registros',
+        'registros_ponto','timeClock','escalas_ponto','escalas','configuracoes_ponto','comprovantes_ponto','logs_ponto','solicitacoes_horas_extras','fechamentos_ponto','payroll','payroll_periods',
+        'payroll_stubs','esocial_events','sst_ambientes','sst_riscos','sst_programas','sst_planos_acao',
+        'sst_agendamentos_exame','sst_resultados_aso','sst_epis_catalogo','sst_entregas_epi',
+        'sst_treinamentos_catalogo','sst_acidentes','sst_cats','relatorios','auditLogs',
+        'notifications','notificacoes','headhunter_clients','terminations','termination_event_rules',
+        'headhunter_contracts','headhunter_hirings','headhunter_finance','headhunter_leads','headhunter_proposals',
+        'despesas','comissoes','garantias','historicos_financeiros','builder_pages','builder_versions',
+        'builder_fields','builder_menus','builder_themes','builder_templates','builder_audit_logs','ai_match_auditoria'
+      ] && (master() || sameTenant(resource.data));
+      allow create: if collectionName in [
+        'entrevistas','interviews','agenda','solicitacoes_admissao','colaboradores',
+        'historico_colaborador','funcionarios','employees','internal_team','documentos','documents',
+        'documentos_colaboradores','contratos_trabalho','jornadas','marcacoes_ponto','ajustes_ponto',
+        'banco_horas','beneficios','beneficios_colaboradores','beneficios_catalogo','employee_benefits','ferias_solicitacoes',
+        'historico_beneficios','anotacoes_internas_colaborador','ferias','periodos_aquisitivos',
+        'regras_ferias','afastamentos','cat_registros','inss_processos','retorno_trabalho','alertas_dp',
+        'folhas_pagamento','rescisoes','solicitacoes_portal','chamados_suporte','comunicados_empresa',
+        'documentos_assinatura_portal','organograma_empresa','cargos_salarios','ponto_registros',
+        'registros_ponto','timeClock','escalas_ponto','escalas','configuracoes_ponto','comprovantes_ponto','logs_ponto','solicitacoes_horas_extras','fechamentos_ponto','payroll','payroll_periods',
+        'payroll_stubs','esocial_events','sst_ambientes','sst_riscos','sst_programas','sst_planos_acao',
+        'sst_agendamentos_exame','sst_resultados_aso','sst_epis_catalogo','sst_entregas_epi',
+        'sst_treinamentos_catalogo','sst_acidentes','sst_cats','relatorios','auditLogs',
+        'notifications','notificacoes','headhunter_clients','terminations','termination_event_rules',
+        'headhunter_contracts','headhunter_hirings','headhunter_finance','headhunter_leads','headhunter_proposals',
+        'despesas','comissoes','garantias','historicos_financeiros','builder_pages','builder_versions',
+        'builder_fields','builder_menus','builder_themes','builder_templates','builder_audit_logs','ai_match_auditoria'
+      ] && tenantCreate(request.resource.data);
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
+    }
+
+    match /modulos/{id} { allow read: if active(); allow write: if master(); }
+    match /modules/{id} { allow read: if active(); allow write: if master(); }
+    match /planos/{id} { allow read: if active(); allow write: if master(); }
+    match /empresa_modulos/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
+    match /companyModules/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
+    match /subscriptions/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
