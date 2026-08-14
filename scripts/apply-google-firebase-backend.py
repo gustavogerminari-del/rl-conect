@@ -11,6 +11,14 @@ if "registerGoogleWorkspaceRoutes(app);" not in t:
 t=t.replace("    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),\n", "    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),\n    firebaseProjectId: 'rl-connect-ed797',\n    firebaseAdminConfigured: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON),\n    googleWorkspaceConfigured: googleWorkspaceConfigured(),\n")
 p.write_text(t,encoding='utf-8')
 
+# Purge legacy demo links and fake sync flags from seed interviews.
+p=Path('src/services/dataService.ts')
+data=p.read_text(encoding='utf-8')
+data=data.replace("    link_reuniao: 'https://meet.google.com/abc-defg-hij',\n", "")
+data=data.replace("    link_reuniao: 'https://meet.google.com/xyz-uvwx-rst',\n", "")
+data=data.replace("    sincronizado_gcal: true,\n", "    sincronizado_gcal: false,\n")
+p.write_text(data,encoding='utf-8')
+
 # environment documentation
 p=Path('.env.example')
 env=p.read_text(encoding='utf-8') if p.exists() else ''
