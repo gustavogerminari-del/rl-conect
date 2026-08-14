@@ -76,6 +76,7 @@ export const MasterAdminView: React.FC = () => {
     : [];
 
   const planos = dataService.getPlanos();
+  const currentUser = dataService.getCurrentUser();
 
   return (
     <div className="space-y-6">
@@ -94,7 +95,7 @@ export const MasterAdminView: React.FC = () => {
                 </span>
               </div>
               <p className="mt-1 text-xs text-slate-400">
-                Controle irrestrito do SaaS, faturamento, clientes e infraestrutura Supabase Cloud.
+                Controle irrestrito do SaaS, faturamento, clientes e infraestrutura Firebase Cloud.
               </p>
             </div>
           </div>
@@ -112,10 +113,10 @@ export const MasterAdminView: React.FC = () => {
 
         {/* Info status bar */}
         <div className="mt-4 pt-4 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px] text-slate-400">
-          <div>Supabase Auth: <span className="text-emerald-400 font-bold">Sim</span></div>
-          <div>UID: <span className="font-mono text-slate-300">sPB_8392104918234</span></div>
-          <div>E-mail: <span className="text-slate-200 font-medium">gustavo.germinari@gmail.com</span></div>
-          <div>Role: <span className="text-amber-400 font-bold">MASTER</span></div>
+          <div>Firebase Auth: <span className="text-emerald-400 font-bold">Ativo</span></div>
+          <div>UID: <span className="font-mono text-slate-300">{currentUser?.id || '-'}</span></div>
+          <div>E-mail: <span className="text-slate-200 font-medium">{currentUser?.email || '-'}</span></div>
+          <div>Role: <span className="text-amber-400 font-bold">{currentUser?.role || '-'}</span></div>
         </div>
       </div>
 
@@ -160,7 +161,7 @@ export const MasterAdminView: React.FC = () => {
               <p className="text-xs text-slate-500">Métricas globais do SaaS MAIS RH em tempo real</p>
             </div>
             <span className="rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1 text-xs font-bold">
-              ● SaaS Operacional • Supabase PostgreSQL
+              ● SaaS Operacional • Firebase Firestore
             </span>
           </div>
 

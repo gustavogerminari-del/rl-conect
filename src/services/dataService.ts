@@ -765,6 +765,7 @@ class DataService {
     const state:any=await firebaseStateBridge.loadTenantState(companyId);
     this.empresas=state.empresas||[];this.usuarios=state.usuarios||[];if(profile&&!this.usuarios.some(u=>u.id===profile.id))this.usuarios.push(profile as Usuario);
     this.vagas=state.vagas||[];this.candidatos=state.candidatos||[];this.candidaturas=state.candidaturas||[];this.entrevistas=state.entrevistas||[];this.clientes=state.clientes||[];this.funcionarios=state.funcionarios||[];this.registroPontos=state.registroPontos||[];this.ferias=state.ferias||[];this.departamentos=state.departamentos||[];this.cargos=state.cargos||[];this.logs=state.logs||[];this.notificacoes=state.notificacoes||[];this.empresaModulos=state.empresaModulos||[];this.assinaturas=state.assinaturas||[];this.pagamentos=state.pagamentos||[];this.admissoesPendentes=state.admissoesPendentes||[];this.cobrancasHeadhunter=state.cobrancasHeadhunter||[];
+    this.builderModules=state.builderModules||[];this.builderVersions=state.builderVersions||[];this.aiLogs=state.aiLogs||[];const aiSettingsRow=(state.aiSettings||[])[0];if(aiSettingsRow)this.ollamaSettings={...this.ollamaSettings,...aiSettingsRow};
   }
   public getFirebaseStatus(){return{ready:this.firebaseReady,authenticated:this.firebaseAuthenticated,error:this.firebaseError};}
   public loginFirebase(email:string,password:string){return firebaseSessionService.login(email,password);}
@@ -779,7 +780,7 @@ class DataService {
   private notify(): void { this.saveAll(); this.listeners.forEach(fn=>fn()); }
   private saveAll(): void {
     if(!this.firebaseReady||!this.firebaseAuthenticated||!this.activeEmpresaId)return;
-    void firebaseStateBridge.persistTenantState(this.activeEmpresaId,{empresas:this.empresas,usuarios:this.usuarios,vagas:this.vagas,candidatos:this.candidatos,candidaturas:this.candidaturas,entrevistas:this.entrevistas,clientes:this.clientes,funcionarios:this.funcionarios,registroPontos:this.registroPontos,ferias:this.ferias,departamentos:this.departamentos,cargos:this.cargos,logs:this.logs,notificacoes:this.notificacoes,empresaModulos:this.empresaModulos,assinaturas:this.assinaturas,pagamentos:this.pagamentos,admissoesPendentes:this.admissoesPendentes,cobrancasHeadhunter:this.cobrancasHeadhunter}).catch(error=>{console.error('[Firestore] Falha ao persistir estado.',error);this.firebaseError=error instanceof Error?error.message:String(error);this.listeners.forEach(fn=>fn());});
+    void firebaseStateBridge.persistTenantState(this.activeEmpresaId,{empresas:this.empresas,usuarios:this.usuarios,vagas:this.vagas,candidatos:this.candidatos,candidaturas:this.candidaturas,entrevistas:this.entrevistas,clientes:this.clientes,funcionarios:this.funcionarios,registroPontos:this.registroPontos,ferias:this.ferias,departamentos:this.departamentos,cargos:this.cargos,logs:this.logs,notificacoes:this.notificacoes,empresaModulos:this.empresaModulos,assinaturas:this.assinaturas,pagamentos:this.pagamentos,admissoesPendentes:this.admissoesPendentes,cobrancasHeadhunter:this.cobrancasHeadhunter,builderModules:this.builderModules.map(x=>({...x,empresa_id:(x as any).empresa_id||this.activeEmpresaId})),builderVersions:this.builderVersions.map(x=>({...x,empresa_id:(x as any).empresa_id||this.activeEmpresaId})),aiLogs:this.aiLogs.map(x=>({...x,empresa_id:(x as any).empresa_id||this.activeEmpresaId})),aiSettings:[{...this.ollamaSettings,id:'master_ai_settings',empresa_id:this.activeEmpresaId}]}).catch(error=>{console.error('[Firestore] Falha ao persistir estado.',error);this.firebaseError=error instanceof Error?error.message:String(error);this.listeners.forEach(fn=>fn());});
   }
 
   // --- Session & Multi-Tenant Helpers ---
@@ -1409,7 +1410,6 @@ class DataService {
 
   public updateOllamaSettings(data: Partial<OllamaSettings>): OllamaSettings {
     this.ollamaSettings = { ...this.ollamaSettings, ...data };
-    saveToStorage('ollamaSettings', this.ollamaSettings);
     this.notify();
     return this.ollamaSettings;
   }
@@ -1429,14 +1429,12 @@ class DataService {
     } else {
       this.builderModules.push({ ...mod, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString() });
     }
-    saveToStorage('builderModules', this.builderModules);
     this.notify();
     return mod;
   }
 
   public deleteBuilderModule(id: string): void {
     this.builderModules = this.builderModules.filter((m) => m.id !== id);
-    saveToStorage('builderModules', this.builderModules);
     this.addLog('EXCLUSAO', `Módulo dinâmico ${id} excluído do Construtor.`);
     this.notify();
   }
@@ -1475,7 +1473,6 @@ class DataService {
     this.saveBuilderModule(mod);
 
     this.builderVersions.unshift(version);
-    saveToStorage('builderVersions', this.builderVersions);
     this.addLog('CRIACAO', `Nova versão de módulo ${mod.nome} v${nextVer} registrada no ambiente ${ambiente}.`);
     this.notify();
     return version;
@@ -1491,7 +1488,6 @@ class DataService {
 
     // Update status of version items
     ver.status = 'restaurada';
-    saveToStorage('builderVersions', this.builderVersions);
 
     this.addLog('EDICAO', `Restaurada versão ${ver.versao} do módulo ${modConfig.nome}.`);
     this.notify();
@@ -1514,7 +1510,6 @@ class DataService {
       usuario_nome: user.nome,
     };
     this.aiLogs.unshift(newLog);
-    saveToStorage('aiLogs', this.aiLogs);
     this.notify();
     return newLog;
   }
@@ -1537,9 +1532,9 @@ class DataService {
       mod = { ...existing };
     } else {
       mod = {
-        id: 'mod_' + Date.now(),
+        id: stableEntityId('builder_mod', `${this.activeEmpresaId}:${res.module?.slug || res.module?.name || 'modulo_customizado'}`),
         nome: res.module?.name || 'Módulo Customizado IA',
-        slug: res.module?.slug || 'modulo_' + Date.now().toString(36),
+        slug: res.module?.slug || stableEntityId('modulo', res.module?.name || 'customizado'),
         descricao: res.module?.description || 'Gerado via Construtor Master IA',
         icone: res.module?.icon || 'sparkles',
         empresa_id: this.activeEmpresaId,
