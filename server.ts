@@ -3,13 +3,19 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { isGoogleConfigured, registerGoogleCalendarRoutes } from './server/googleCalendarRoutes.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
+app.disable('x-powered-by');
 app.use(express.json({ limit: '10mb' }));
+
+// A integração Google é registrada antes do Vite/SPA para que o callback OAuth
+// nunca seja capturado pela rota pública do frontend.
+registerGoogleCalendarRoutes(app);
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -21,12 +27,17 @@ const ai = new GoogleGenAI({
   },
 });
 
-// Health check
+// Health check: expõe apenas flags, nunca chaves ou tokens.
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    version: '2.0.0',
+    version: '2.1.0',
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    googleCalendarConfigured: isGoogleConfigured(),
+    supabaseServerConfigured: Boolean(
+      (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    ),
   });
 });
 
@@ -276,7 +287,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`RL CONNECT 2.0 Server running on http://0.0.0.0:${PORT}`);
+    console.log(`RL CONNECT 2.1 Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
