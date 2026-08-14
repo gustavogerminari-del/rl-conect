@@ -1,0 +1,37 @@
+name: Apply E2E QA Patch
+
+on:
+  push:
+    branches:
+      - agent/google-calendar-meet
+    paths:
+      - scripts/apply_e2e_qa_patch.py
+      - .github/workflows/apply-e2e-qa-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/google-calendar-meet
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply source patch
+        run: python scripts/apply_e2e_qa_patch.py
+      - name: Commit patched application
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src
+          git commit -m "fix: complete recruitment headhunter and DP E2E routing"
+          git push origin HEAD:agent/google-calendar-meet
