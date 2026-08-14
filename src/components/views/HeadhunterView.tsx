@@ -19,7 +19,9 @@ export const HeadhunterView: React.FC = () => {
   // Uses exact same jobs table as specified: "O módulo Headhunter deve utilizar exatamente as mesmas vagas do Recrutamento. Não criar tabelas duplicadas."
   const [vagas, setVagas] = useState(dataService.getVagas());
   const [clientes, setClientes] = useState(dataService.getClientes());
-  const [activeTab, setActiveTab] = useState<'vagas' | 'clientes'>('vagas');
+  const [activeTab, setActiveTab] = useState<'vagas' | 'clientes' | 'financeiro'>('vagas');
+
+  const cobrancas = dataService.getCobrancasHeadhunter();
 
   // New Client Form
   const [showClienteModal, setShowClienteModal] = useState(false);
@@ -104,7 +106,36 @@ export const HeadhunterView: React.FC = () => {
           <Building2 className="h-4 w-4" />
           Empresas Clientes ({clientes.length})
         </button>
+        <button
+          onClick={() => setActiveTab('financeiro')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${activeTab === 'financeiro' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-600 hover:bg-slate-100'}`}
+        >
+          <DollarSign className="h-4 w-4" />
+          Financeiro ({cobrancas.length})
+        </button>
       </div>
+
+      {activeTab === 'financeiro' && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-xs text-indigo-950">
+            Contratações de vagas com origem Headhunter são roteadas para FINANCEIRO_HEADHUNTER. Cobrança só fica AGUARDANDO_COBRANCA quando o fee calculado é maior que zero.
+          </div>
+          {cobrancas.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-xs text-slate-500">Nenhuma contratação Headhunter encaminhada ao financeiro.</div>
+          ) : cobrancas.map((c) => (
+            <div key={c.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm text-xs">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-extrabold text-slate-900">{c.candidato_nome}</h3>
+                  <p className="text-slate-500">Regra: {c.regra_fee || 'Pendente'}</p>
+                  <p className="mt-2 text-base font-black text-emerald-700">{c.valor ? `R$ ${Number(c.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Fee não configurado'}</p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-[10px] font-extrabold ${c.status === 'AGUARDANDO_COBRANCA' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{c.status}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Shared Jobs View */}
       {activeTab === 'vagas' && (

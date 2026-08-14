@@ -24,6 +24,7 @@ import {
   AILogExecution,
   StructuredAIResponse,
 } from '../types';
+import { calculateHeadhunterFee, resolveHiringDestination } from './businessRules';
 
 // Storage keys for persistent state
 const STORAGE_PREFIX = 'rl_connect_v2_';
@@ -31,7 +32,11 @@ const STORAGE_PREFIX = 'rl_connect_v2_';
 function loadFromStorage<T>(key: string, defaultValue: T): T {
   try {
     const saved = localStorage.getItem(STORAGE_PREFIX + key);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(defaultValue) && !Array.isArray(parsed)) return defaultValue;
+      return parsed as T;
+    }
   } catch (err) {
     console.error('Error loading from storage:', err);
   }
@@ -386,11 +391,11 @@ const initialEntrevistas: Entrevista[] = [
     data_hora: '2026-08-07T14:00:00Z',
     duracao_minutos: 60,
     formato: 'Online - Google Meet',
-    link_reuniao: 'https://meet.google.com/abc-defg-hij',
+    link_reuniao: undefined,
     entrevistador_id: 'usr_gestor_1',
     status: 'agendada',
     anotacoes: 'Focar na arquitetura de microservices e testes de banco PostgreSQL.',
-    sincronizado_gcal: true,
+    sincronizado_gcal: false,
     criado_em: '2026-08-04T16:00:00Z',
   },
   {
@@ -403,10 +408,10 @@ const initialEntrevistas: Entrevista[] = [
     data_hora: '2026-08-08T10:00:00Z',
     duracao_minutos: 45,
     formato: 'Online - Google Meet',
-    link_reuniao: 'https://meet.google.com/xyz-uvwx-rst',
+    link_reuniao: undefined,
     entrevistador_id: 'usr_admin_1',
     status: 'agendada',
-    sincronizado_gcal: true,
+    sincronizado_gcal: false,
     criado_em: '2026-08-02T14:10:00Z',
   },
 ];
@@ -747,6 +752,8 @@ class DataService {
   private empresaModulos: EmpresaModulo[] = loadFromStorage('empresaModulos', initialEmpresaModulos);
   private assinaturas: Assinatura[] = loadFromStorage('assinaturas', initialAssinaturas);
   private pagamentos: Pagamento[] = loadFromStorage('pagamentos', initialPagamentos);
+  private admissoesPendentes: any[] = loadFromStorage('admissoesPendentes', []);
+  private cobrancasHeadhunter: any[] = loadFromStorage('cobrancasHeadhunter', []);
 
   // Master AI Builder Stores
   private ollamaSettings: OllamaSettings = loadFromStorage('ollamaSettings', initialOllamaSettings);
@@ -788,6 +795,8 @@ class DataService {
     saveToStorage('empresaModulos', this.empresaModulos);
     saveToStorage('assinaturas', this.assinaturas);
     saveToStorage('pagamentos', this.pagamentos);
+    saveToStorage('admissoesPendentes', this.admissoesPendentes);
+    saveToStorage('cobrancasHeadhunter', this.cobrancasHeadhunter);
     saveToStorage('currentUserId', this.currentUserId);
     saveToStorage('activeEmpresaId', this.activeEmpresaId);
   }
@@ -914,7 +923,12 @@ class DataService {
 
   // --- VAGAS (Recrutamento & Headhunter) ---
   public getVagas(moduloOrigem?: 'recrutamento' | 'headhunter'): Vaga[] {
-    let list = this.filterByEmpresa(this.vagas);
+    let list = this.filterByEmpresa(this.vagas).map((v) => ({
+      ...v,
+      requisitos: Array.isArray(v.requisitos) ? v.requisitos : [],
+      diferenciais: Array.isArray(v.diferenciais) ? v.diferenciais : [],
+      beneficios: Array.isArray(v.beneficios) ? v.beneficios : [],
+    }));
     if (moduloOrigem) {
       list = list.filter((v) => v.modulo_origem === moduloOrigem || v.modulo_origem === undefined);
     }
@@ -973,7 +987,11 @@ class DataService {
 
   // --- CANDIDATOS & CANDIDATURAS ---
   public getCandidatos(): Candidato[] {
-    return this.filterByEmpresa(this.candidatos);
+    return this.filterByEmpresa(this.candidatos).map((c) => ({
+      ...c,
+      tags: Array.isArray(c.tags) ? c.tags : [],
+      habilidades: Array.isArray(c.habilidades) ? c.habilidades : [],
+    }));
   }
 
   public createCandidato(data: Omit<Candidato, 'id' | 'criado_em' | 'empresa_id'>): Candidato {
@@ -1017,12 +1035,65 @@ class DataService {
 
   public moveCandidaturaEtapa(candidaturaId: string, novaEtapa: Candidatura['etapa_pipeline']): void {
     const candApp = this.candidaturas.find((c) => c.id === candidaturaId);
-    if (candApp) {
-      candApp.etapa_pipeline = novaEtapa;
-      candApp.atualizado_em = new Date().toISOString();
-      this.addLog('EDICAO', `Candidatura ID ${candidaturaId} movida para etapa "${novaEtapa}".`);
-      this.notify();
+    if (!candApp) return;
+
+    candApp.etapa_pipeline = novaEtapa;
+    candApp.atualizado_em = new Date().toISOString();
+
+    if (novaEtapa === 'Contratado') {
+      candApp.status = 'aprovado';
+      const vaga = this.vagas.find((v) => v.id === candApp.vaga_id);
+      const candidato = this.candidatos.find((c) => c.id === candApp.candidato_id);
+      if (vaga && candidato) {
+        const destination = resolveHiringDestination(vaga.modulo_origem);
+        if (destination === 'ADMISSION') {
+          const exists = this.admissoesPendentes.some((a) => a.candidatura_id === candApp.id && a.status !== 'CONCLUIDA');
+          if (!exists) {
+            this.admissoesPendentes.unshift({
+              id: 'adm_' + Date.now(),
+              empresa_id: candApp.empresa_id,
+              candidatura_id: candApp.id,
+              vaga_id: vaga.id,
+              candidato_id: candidato.id,
+              candidato_nome: candidato.nome,
+              candidato_email: candidato.email,
+              cargo: vaga.cargo || vaga.titulo,
+              departamento: vaga.departamento || 'Geral',
+              salario_sugerido: vaga.salario_min || vaga.salario_max || 0,
+              status: 'PENDENTE_DOCUMENTOS',
+              destination,
+              criado_em: new Date().toISOString(),
+            });
+          }
+          this.addLog('CRIACAO', `Contratação ${candApp.id} encaminhada para ADMISSION/DP.`);
+        } else {
+          const exists = this.cobrancasHeadhunter.some((c) => c.candidatura_id === candApp.id);
+          if (!exists) {
+            const salario = vaga.salario_min || vaga.salario_max || 0;
+            const valor = calculateHeadhunterFee(salario, vaga.honorario_headhunter);
+            this.cobrancasHeadhunter.unshift({
+              id: 'cob_' + Date.now(),
+              empresa_id: candApp.empresa_id,
+              candidatura_id: candApp.id,
+              vaga_id: vaga.id,
+              candidato_id: candidato.id,
+              candidato_nome: candidato.nome,
+              cliente_id: vaga.cliente_id,
+              salario_base: salario,
+              regra_fee: vaga.honorario_headhunter || '',
+              valor,
+              status: valor && valor > 0 ? 'AGUARDANDO_COBRANCA' : 'PENDENTE_DADOS_COMERCIAIS',
+              destination,
+              criado_em: new Date().toISOString(),
+            });
+          }
+          this.addLog('CRIACAO', `Contratação ${candApp.id} encaminhada para FINANCEIRO_HEADHUNTER.`);
+        }
+      }
     }
+
+    this.addLog('EDICAO', `Candidatura ID ${candidaturaId} movida para etapa "${novaEtapa}".`);
+    this.notify();
   }
 
   public applyToVagaPublic(
@@ -1179,6 +1250,49 @@ class DataService {
     }
   }
 
+  // --- CONTRATAÇÃO / ADMISSÃO / FINANCEIRO HEADHUNTER ---
+  public getAdmissoesPendentes(): any[] {
+    return this.filterByEmpresa(this.admissoesPendentes);
+  }
+
+  public concluirAdmissao(admissaoId: string, cpf: string, salario?: number): Funcionario | null {
+    const adm = this.admissoesPendentes.find((a) => a.id === admissaoId);
+    if (!adm || adm.status === 'CONCLUIDA') return null;
+    const candidato = this.candidatos.find((c) => c.id === adm.candidato_id);
+    if (!candidato || !cpf.trim()) return null;
+
+    const existing = this.funcionarios.find(
+      (f) => f.empresa_id === adm.empresa_id && f.email.toLowerCase() === candidato.email.toLowerCase()
+    );
+    if (existing) {
+      adm.status = 'CONCLUIDA';
+      adm.funcionario_id = existing.id;
+      this.notify();
+      return existing;
+    }
+
+    const funcionario = this.createFuncionario({
+      nome: candidato.nome,
+      cpf: cpf.trim(),
+      email: candidato.email,
+      telefone: candidato.telefone,
+      cargo: adm.cargo,
+      departamento: adm.departamento,
+      salario: Number(salario || adm.salario_sugerido || 0),
+      data_admissao: new Date().toISOString().slice(0, 10),
+      status: 'ativo',
+    });
+    adm.status = 'CONCLUIDA';
+    adm.funcionario_id = funcionario.id;
+    this.addLog('CRIACAO', `Admissão ${adm.id} concluída e colaborador ${funcionario.nome} criado no DP.`);
+    this.notify();
+    return funcionario;
+  }
+
+  public getCobrancasHeadhunter(): any[] {
+    return this.filterByEmpresa(this.cobrancasHeadhunter);
+  }
+
   // --- ENTREVISTAS & AGENDA ---
   public getEntrevistas(): Entrevista[] {
     return this.filterByEmpresa(this.entrevistas);
@@ -1189,7 +1303,7 @@ class DataService {
       ...data,
       id: 'ent_' + Date.now(),
       empresa_id: this.activeEmpresaId,
-      sincronizado_gcal: true,
+      sincronizado_gcal: Boolean(data.sincronizado_gcal),
       criado_em: new Date().toISOString(),
     };
     this.entrevistas.unshift(newEnt);

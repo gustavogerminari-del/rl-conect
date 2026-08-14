@@ -20,7 +20,9 @@ export const DepartamentoPessoalView: React.FC = () => {
   const [funcionarios, setFuncionarios] = useState(dataService.getFuncionarios());
   const [pontos, setPontos] = useState(dataService.getRegistroPontos());
   const [ferias, setFerias] = useState(dataService.getFerias());
-  const [activeTab, setActiveTab] = useState<'colaboradores' | 'ponto' | 'ferias' | 'documentos'>('colaboradores');
+  const [activeTab, setActiveTab] = useState<'admissoes' | 'colaboradores' | 'ponto' | 'ferias' | 'documentos'>('admissoes');
+
+  const admissoesPendentes = dataService.getAdmissoesPendentes();
 
   const [showFuncModal, setShowFuncModal] = useState(false);
   const [nomeFunc, setNomeFunc] = useState('');
@@ -105,7 +107,14 @@ export const DepartamentoPessoalView: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setActiveTab('admissoes')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${activeTab === 'admissoes' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-white text-slate-600 hover:bg-slate-100'}`}
+        >
+          <UserPlus className="h-4 w-4" />
+          Admissões Pendentes ({admissoesPendentes.filter((a) => a.status !== 'CONCLUIDA').length})
+        </button>
         <button
           onClick={() => setActiveTab('colaboradores')}
           className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
@@ -141,6 +150,37 @@ export const DepartamentoPessoalView: React.FC = () => {
         </button>
       </div>
 
+      {activeTab === 'admissoes' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="font-bold text-slate-900">Admissões encaminhadas pelo Recrutamento</h2>
+            <p className="mt-1 text-xs text-slate-500">Candidatos de recrutamento interno chegam aqui automaticamente ao atingir Contratado.</p>
+          </div>
+          {admissoesPendentes.filter((a) => a.status !== 'CONCLUIDA').length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-xs text-slate-500">Nenhuma admissão pendente.</div>
+          ) : admissoesPendentes.filter((a) => a.status !== 'CONCLUIDA').map((adm) => (
+            <div key={adm.id} className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-extrabold text-slate-900">{adm.candidato_nome}</h3>
+                  <p className="text-slate-600">{adm.cargo} • {adm.departamento}</p>
+                  <p className="mt-1 font-bold text-amber-800">Status: {adm.status}</p>
+                </div>
+                <button onClick={() => {
+                  const cpf = window.prompt('Informe o CPF do colaborador para concluir a admissão:') || '';
+                  if (!cpf.trim()) return;
+                  const salarioStr = window.prompt('Informe o salário de admissão:', String(adm.salario_sugerido || 0)) || '';
+                  const salario = Number(salarioStr.replace(',', '.'));
+                  const result = dataService.concluirAdmissao(adm.id, cpf, salario);
+                  if (!result) window.alert('Não foi possível concluir a admissão. Confira CPF e salário.');
+                  refreshData();
+                }} className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white hover:bg-emerald-700">Concluir admissão no DP</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* TAB 1: COLABORADORES */}
       {activeTab === 'colaboradores' && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -160,7 +200,7 @@ export const DepartamentoPessoalView: React.FC = () => {
                 <p><strong className="text-slate-900">CPF:</strong> {func.cpf}</p>
                 <p><strong className="text-slate-900">E-mail:</strong> {func.email}</p>
                 <p><strong className="text-slate-900">Admissão:</strong> {func.data_admissao}</p>
-                <p><strong className="text-slate-900">Salário CLT:</strong> R$ {func.salario.toLocaleString('pt-BR')}</p>
+                <p><strong className="text-slate-900">Salário CLT:</strong> R$ {Number(func.salario || 0).toLocaleString('pt-BR')}</p>
               </div>
             </div>
           ))}

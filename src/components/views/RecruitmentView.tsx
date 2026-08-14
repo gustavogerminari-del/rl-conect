@@ -25,7 +25,7 @@ import { dataService } from '../../services/dataService';
 import { Vaga, Candidatura, EtapaPipelineNome, Candidato } from '../../types';
 
 export const RecruitmentView: React.FC = () => {
-  const [vagas, setVagas] = useState(dataService.getVagas('recrutamento'));
+  const [vagas, setVagas] = useState(dataService.getVagas());
   const [selectedVagaId, setSelectedVagaId] = useState<string>(vagas[0]?.id || '');
   const [activeTab, setActiveTab] = useState<'pipeline' | 'vagas' | 'talentos'>('pipeline');
   const [searchTerm, setSearchTerm] = useState('');
@@ -49,7 +49,7 @@ export const RecruitmentView: React.FC = () => {
   const [parecerRhInput, setParecerRhInput] = useState('');
 
   const refreshData = () => {
-    const updatedVagas = dataService.getVagas('recrutamento');
+    const updatedVagas = dataService.getVagas();
     setVagas(updatedVagas);
     if (!selectedVagaId && updatedVagas.length > 0) {
       setSelectedVagaId(updatedVagas[0].id);
@@ -300,7 +300,7 @@ export const RecruitmentView: React.FC = () => {
 
                             {/* Tags */}
                             <div className="mt-2.5 flex flex-wrap gap-1">
-                              {app.candidato.tags.slice(0, 3).map((tag, i) => (
+                              {(app.candidato.tags || []).slice(0, 3).map((tag, i) => (
                                 <span
                                   key={i}
                                   className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600"
@@ -365,6 +365,9 @@ export const RecruitmentView: React.FC = () => {
                     </span>
                     <h3 className="mt-2 font-bold text-slate-900 text-sm">{vaga.titulo}</h3>
                     <p className="text-xs text-slate-500">{vaga.departamento}</p>
+                    <span className={`mt-1 inline-block rounded px-2 py-0.5 text-[9px] font-extrabold uppercase ${vaga.modulo_origem === 'headhunter' ? 'bg-violet-100 text-violet-700' : 'bg-sky-100 text-sky-700'}`}>
+                      Origem: {vaga.modulo_origem === 'headhunter' ? 'Headhunter' : 'Recrutamento'}
+                    </span>
                   </div>
 
                   <span
@@ -451,7 +454,7 @@ export const RecruitmentView: React.FC = () => {
                   <p className="mt-3 text-xs text-slate-600 line-clamp-2">{cand.resumo_ia}</p>
 
                   <div className="mt-3 flex flex-wrap gap-1">
-                    {cand.habilidades.map((h, i) => (
+                    {(cand.habilidades || []).map((h, i) => (
                       <span key={i} className="rounded bg-white px-2 py-0.5 text-[9px] font-bold text-slate-700 border border-slate-200">
                         {h}
                       </span>
