@@ -77,3 +77,4 @@ replace_once(path,
 "console.log('[E2E] PASSOU: 2 fluxos completos sem travar e sem duplicidade.');")
 
 print('Idempotency guards and duplicate tests applied.')
+# trigger-v2
