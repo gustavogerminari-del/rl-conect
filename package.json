@@ -9,7 +9,8 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:flows": "tsx scripts/e2e-flow-tests.ts"
+    "test:flows": "tsx scripts/e2e-flow-tests.ts",
+    "test:ui": "playwright test"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -25,6 +26,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.0",
