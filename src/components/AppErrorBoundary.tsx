@@ -1,17 +1,17 @@
-import React from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle, RefreshCcw, Trash2 } from 'lucide-react';
 
 type State = { hasError: boolean; message: string };
-type Props = { children?: React.ReactNode };
+type Props = { children?: ReactNode };
 
-export class AppErrorBoundary extends React.Component<Props, State> {
+export class AppErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false, message: '' };
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, message: error?.message || 'Erro inesperado ao carregar esta tela.' };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('RL Connect UI error:', error, info);
   }
 
