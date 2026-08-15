@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDocs, setDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { sanitizeFirestoreData } from '../lib/firestoreUtils';
 import { AuditService } from '../services/AuditService';
@@ -11,6 +11,11 @@ const newTenantId = () => `empresa-${Date.now()}-${Math.random().toString(36).sl
 const DEFAULT_MODULES: TenantModulePermissions = { recrutamento: true, departamentoPessoal: false, vagas: true, headhunter: false, bancoTalentos: true, entrevistas: true, equipeInterna: true, consultorRH: true, feriasBeneficios: false, documentosAssinatura: false, auditoriaLogs: false, relatoriosAvancados: false, siteVagasPersonalizado: false, folha: false, ponto: false };
 const normalizeModules = (value?: Partial<TenantModulePermissions>): TenantModulePermissions => ({ ...DEFAULT_MODULES, ...(value || {}) });
 const modulesForUser = (modules: TenantModulePermissions): Record<string, boolean> => Object.fromEntries(Object.entries(modules).map(([key, value]) => [key, Boolean(value)]));
+const normalizeRole = (value: unknown) => String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+const isPlatformIdentity = (role: unknown, tipoUsuario: unknown) => {
+  const values = [normalizeRole(role), normalizeRole(tipoUsuario)];
+  return values.some((value) => ['MASTER', 'MASTER_ADMIN', 'DEVELOPER', 'DEVELOPER_ADMIN', 'DESENVOLVEDOR'].includes(value));
+};
 
 export function normalizeTenantRecord(id: string, raw: Record<string, any>): ClientTenant {
   const source = raw.rawTenantData && typeof raw.rawTenantData === 'object' ? raw.rawTenantData : raw;
@@ -80,7 +85,13 @@ export async function saveTenantAsync(input: TenantSaveInput): Promise<ClientTen
 
 export async function toggleTenantStatus(id: string, currentStatus: TenantStatus): Promise<ClientTenant[]> { const nextStatus: TenantStatus = currentStatus === 'Ativo' ? 'Suspenso' : 'Ativo'; await setDoc(doc(db, 'empresas', id), sanitizeFirestoreData({ status: nextStatus, updatedAt: nowIso(), updatedBy: auth.currentUser?.uid || 'MASTER' }), { merge: true }); await AuditService.log({ action: 'UPDATE', description: `Empresa ${id} alterada para ${nextStatus}`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: id }); return syncTenantsFromFirestore(); }
 
-async function deleteTenantOnServer(id: string): Promise<{ deletedAuthUsers: number; removedProfileCount: number }> {
+type ServerDeleteResult = {
+  deletedAuthUsers: number;
+  removedProfileCount: number;
+  authDeletionPending: number;
+};
+
+async function deleteTenantOnServer(id: string): Promise<ServerDeleteResult> {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error('Sessão MASTER não encontrada. Entre novamente.');
   const idToken = await currentUser.getIdToken();
@@ -98,27 +109,77 @@ async function deleteTenantOnServer(id: string): Promise<{ deletedAuthUsers: num
     : { success: false, error: (await response.text()).slice(0, 250) };
 
   if (!response.ok || !result.success) {
-    throw new Error(result.error || `Não foi possível excluir a empresa (HTTP ${response.status}).`);
+    const error = new Error(result.error || `Não foi possível excluir a empresa (HTTP ${response.status}).`) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
 
   return {
     deletedAuthUsers: Number(result.deletedAuthUsers || 0),
     removedProfileCount: Number(result.removedProfileCount || 0),
+    authDeletionPending: Number(result.authDeletionPending || 0),
   };
 }
 
-export async function deleteTenant(id: string): Promise<ClientTenant[]> {
-  // A exclusão completa é feita em rota MASTER do servidor: primeiro remove as
-  // contas do Firebase Authentication e só depois apaga os perfis e a empresa.
-  // Se o Authentication falhar, a empresa é preservada para permitir nova tentativa.
-  const result = await deleteTenantOnServer(id);
+async function deleteTenantFromFirestore(id: string): Promise<number> {
+  // Fallback para ambientes em que a rota administrativa/Service Account ainda
+  // não está disponível. Remove empresa e perfis do Firestore; contas Auth ficam
+  // sem perfil e, portanto, sem acesso ao sistema até a limpeza administrativa.
+  const allUsers = await UserService.list();
+  const linkedUsers = allUsers.filter((user) => user.companyId === id && !isPlatformIdentity(user.role, user.tipoUsuario));
+  const batch = writeBatch(db);
+  for (const user of linkedUsers) {
+    batch.delete(doc(db, 'usuarios', user.uid));
+    batch.delete(doc(db, 'users', user.uid));
+  }
+  batch.delete(doc(db, 'empresa_modulos', id));
+  batch.delete(doc(db, 'companyModules', id));
+  batch.delete(doc(db, 'companies', id));
+  batch.delete(doc(db, 'tenants', id));
+  batch.delete(doc(db, 'empresas', id));
+  await batch.commit();
+  return linkedUsers.length;
+}
 
-  await AuditService.log({
-    action: 'DELETE',
-    description: `Empresa ${id} removida do cadastro Master, ${result.deletedAuthUsers} conta(s) excluída(s) do Firebase Authentication e ${result.removedProfileCount} perfil(is) removido(s) do Firestore`,
-    moduleName: 'Painel Master',
-    targetEntity: 'Empresa',
-    companyId: id,
-  });
+export async function deleteTenant(id: string): Promise<ClientTenant[]> {
+  let deletedAuthUsers = 0;
+  let removedProfileCount = 0;
+  let authDeletionPending = 0;
+  let usedFirestoreFallback = false;
+
+  try {
+    const result = await deleteTenantOnServer(id);
+    deletedAuthUsers = result.deletedAuthUsers;
+    removedProfileCount = result.removedProfileCount;
+    authDeletionPending = result.authDeletionPending;
+  } catch (error: any) {
+    const status = Number(error?.status || 0);
+    const message = String(error?.message || '');
+    const canFallback = status !== 403 && (
+      !status ||
+      [404, 405, 500, 501, 502, 503].includes(status) ||
+      /FIREBASE_SERVICE_ACCOUNT_JSON|não configurada|not found|formato inesperado|HTTP/i.test(message)
+    );
+    if (!canFallback) throw error;
+
+    removedProfileCount = await deleteTenantFromFirestore(id);
+    authDeletionPending = removedProfileCount;
+    usedFirestoreFallback = true;
+  }
+
+  try {
+    await AuditService.log({
+      action: 'DELETE',
+      description: usedFirestoreFallback
+        ? `Empresa ${id} removida do Firestore por fallback; ${removedProfileCount} perfil(is) removido(s) e ${authDeletionPending} conta(s) aguardando limpeza no Authentication`
+        : `Empresa ${id} removida do cadastro Master, ${deletedAuthUsers} conta(s) excluída(s) do Firebase Authentication, ${removedProfileCount} perfil(is) removido(s) e ${authDeletionPending} conta(s) pendente(s) no Authentication`,
+      moduleName: 'Painel Master',
+      targetEntity: 'Empresa',
+      companyId: id,
+    });
+  } catch (auditError) {
+    console.warn('Empresa excluída, mas o log de auditoria não pôde ser salvo:', auditError);
+  }
+
   return syncTenantsFromFirestore();
 }
