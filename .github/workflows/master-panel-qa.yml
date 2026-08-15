@@ -8,6 +8,9 @@ on:
       - 'src/master-admin/**'
       - 'src/services/ModuleCatalogService.ts'
       - 'tests/master-*.test.mjs'
+      - 'scripts/build-verified.sh'
+      - 'scripts/sites-env.sh'
+      - 'scripts/validate-artifact.sh'
       - '.github/workflows/master-panel-qa.yml'
   workflow_dispatch:
 
