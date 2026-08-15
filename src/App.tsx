@@ -19,6 +19,7 @@ import { PontoDigitalView } from './ponto-digital';
 import { AuditLogsView } from './audit-logs';
 import { SubscriptionsView } from './subscriptions';
 import { MasterAdminView } from './master-admin';
+import { DeveloperArea } from './developer';
 import { MaisRhIaView } from './ai/components/MaisRhIaView';
 import { DepartamentoPessoalView, DPSubTab } from './departamento-pessoal/DepartamentoPessoalView';
 import { PortalColaboradorView } from './departamento-pessoal/components/PortalColaboradorView';
@@ -36,7 +37,7 @@ import {
   INITIAL_RECRUITERS, 
   fontStages 
 } from './data/initialData';
-import { getCompanyId, isMasterProfile, requireCompanyId } from './auth/profile';
+import { getCompanyId, isDeveloperProfile, isMasterProfile, requireCompanyId } from './auth/profile';
 
 import { Job, Candidate, Interview, InterviewScheduleInput, StageId } from './types/rh';
 import { JobService } from './services/JobService';
@@ -106,6 +107,14 @@ function MainAppContent() {
   // Load company jobs, candidates and candidatures count from Firestore
   React.useEffect(() => {
     if (!isAuthenticated) return;
+
+    if (isDeveloperProfile(user)) {
+      setJobs([]);
+      setCandidates([]);
+      setInterviews([]);
+      setCompanyApplicationsCount(0);
+      return;
+    }
 
     const isMaster = isMasterProfile(user);
     const userCompanyId = isMaster ? undefined : getCompanyId(user) || undefined;
@@ -288,6 +297,10 @@ function MainAppContent() {
       />
     );
   }
+
+  // DESENVOLVEDOR possui experiência própria. Não renderiza Navbar, Sidebar,
+  // rotas empresariais ou Painel Master, mesmo quando tenta navegar por URL.
+  if (isDeveloperProfile(user)) return <DeveloperArea />;
 
   const handleScheduleInterview = async (newInterviewData: InterviewScheduleInput) => {
     const companyId = requireCompanyId(user, 'agendar a entrevista');
