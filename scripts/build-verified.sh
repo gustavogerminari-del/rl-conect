@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ "${SITES_ENV_READY:-}" != "1" ]]; then
-  exec "${script_dir}/sites-env.sh" -- "$0" "$@"
+  exec bash "${script_dir}/sites-env.sh" -- "$0" "$@"
 fi
 
 command -v timeout || {
@@ -14,7 +14,7 @@ command -v timeout || {
 
 vinext="${SITES_PROJECT_ROOT}/node_modules/.bin/vinext"
 if [[ ! -x "${vinext}" ]]; then
-  echo "vinext is unavailable. Run npm run install:ci and wait for it to finish before building." >&2
+  echo "vinext is unavailable. Install dependencies before building." >&2
   exit 69
 fi
 
@@ -26,4 +26,4 @@ timeout \
   "${SITES_BUILD_TIMEOUT:-3m}" \
   "${vinext}" build
 
-"${script_dir}/validate-artifact.sh"
+bash "${script_dir}/validate-artifact.sh"
