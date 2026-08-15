@@ -6,7 +6,7 @@ import {
   Save, Settings, X,
 } from 'lucide-react';
 import { useAuth } from '../auth';
-import { isDeveloperProfile } from '../auth/profile';
+import { isDeveloperProfile, isMasterProfile } from '../auth/profile';
 import { ModuleErrorBoundary } from '../components/ModuleErrorBoundary';
 import { auth, db } from '../lib/firebase';
 import { MasterDeveloperAssistantView } from '../master-admin/components/MasterDeveloperAssistantView';
@@ -45,7 +45,11 @@ async function authenticatedHeaders() {
   return { Authorization: `Bearer ${token}` };
 }
 
-export const DeveloperArea: React.FC = () => {
+type DeveloperAreaProps = {
+  onBackToMaster?: () => void;
+};
+
+export const DeveloperArea: React.FC<DeveloperAreaProps> = ({ onBackToMaster }) => {
   const { user, logout } = useAuth();
   const [active, setActive] = useState<SectionKey>('overview');
   const [mobile, setMobile] = useState(false);
@@ -74,9 +78,14 @@ export const DeveloperArea: React.FC = () => {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { void refreshDiagnostics(); }, []);
+  const hasTechnicalAccess = isDeveloperProfile(user) || isMasterProfile(user);
+  const hasMasterAccess = isMasterProfile(user);
 
-  if (!isDeveloperProfile(user)) return <div className="min-h-screen bg-slate-950 p-8 text-white"><Card title="Acesso negado" status={<Status tone="red">ERRO</Status>}><p className="text-sm text-slate-300">Esta área exige Firebase Authentication e perfil Firestore com role developer_admin ativo.</p></Card></div>;
+  useEffect(() => {
+    if (hasTechnicalAccess) void refreshDiagnostics();
+  }, [user?.uid, user?.role]);
+
+  if (!hasTechnicalAccess) return <div className="min-h-screen bg-slate-950 p-8 text-white"><Card title="Acesso negado" status={<Status tone="red">ERRO</Status>}><p className="text-sm text-slate-300">Esta área exige Firebase Authentication e perfil Firestore MASTER ou developer_admin ativo.</p></Card></div>;
 
   const renderSection = () => {
     if (active === 'ai' || active === 'code') return <MasterDeveloperAssistantView />;
@@ -101,7 +110,10 @@ export const DeveloperArea: React.FC = () => {
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">{menu.map(item => { const Icon = item.icon; return <button key={item.key} onClick={() => { setActive(item.key); setMobile(false); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-bold ${active === item.key ? 'bg-cyan-500 text-slate-950' : 'text-slate-300 hover:bg-slate-900'}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
       <div className="border-t border-slate-800 p-4"><p className="truncate text-xs font-bold">{user?.name}</p><p className="truncate text-[11px] text-slate-500">{user?.email}</p><button onClick={() => void logout()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 p-2 text-xs font-bold hover:bg-slate-900"><LogOut className="h-4 w-4" />Sair</button></div>
     </aside>
-    <main className="min-w-0 flex-1 p-4 pt-16 sm:p-6 sm:pt-16 lg:p-8"><ModuleErrorBoundary key={active} moduleKey={`developer-${active}`} onGoHome={() => setActive('overview')}>{renderSection()}</ModuleErrorBoundary></main>
+    <main className="min-w-0 flex-1 p-4 pt-16 sm:p-6 sm:pt-16 lg:p-8">
+      {hasMasterAccess && onBackToMaster && <button type="button" onClick={onBackToMaster} className="mb-5 inline-flex items-center rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-2.5 text-sm font-black text-cyan-200 hover:bg-cyan-500/20">← Voltar para o Painel Master</button>}
+      <ModuleErrorBoundary key={active} moduleKey={`developer-${active}`} onGoHome={() => setActive('overview')}>{renderSection()}</ModuleErrorBoundary>
+    </main>
   </div>;
 };
 

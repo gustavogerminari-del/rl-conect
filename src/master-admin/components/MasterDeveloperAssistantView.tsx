@@ -16,7 +16,7 @@ type KeyProvider = 'gemini' | 'openai';
 
 async function authHeaders() {
   const token = await auth.currentUser?.getIdToken();
-  if (!token) throw new Error('Sessão DESENVOLVEDOR não encontrada.');
+  if (!token) throw new Error('Sessão Firebase MASTER/DEV não encontrada.');
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 

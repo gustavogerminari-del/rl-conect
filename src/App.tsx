@@ -46,9 +46,14 @@ import { JobCandidateService } from './services/JobCandidateService';
 import { InterviewService } from './services/InterviewService';
 import { GoogleWorkspaceService } from './services/GoogleWorkspaceService';
 
+const DEVELOPER_AREA_PATH = '/master/programador';
+
 function MainAppContent() {
   const { user, isAuthenticated, isModuleActive } = useAuth();
   const [showLoginScreen, setShowLoginScreen] = useState(false);
+  const [pathname, setPathname] = useState(() => {
+    return typeof window === 'undefined' ? '/' : window.location.pathname;
+  });
   const [activeTab, setActiveTab] = useState<MainTab>(() => {
     return isMasterProfile(user) ? 'acesso-master' : 'dashboard';
   });
@@ -94,6 +99,20 @@ function MainAppContent() {
       setActiveTab('acesso-master');
     }
   }, [user?.role]);
+
+  React.useEffect(() => {
+    const handlePopState = () => setPathname(window.location.pathname);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateToPath = React.useCallback((nextPath: string, replace = false) => {
+    if (window.location.pathname !== nextPath) {
+      const method = replace ? 'replaceState' : 'pushState';
+      window.history[method]({}, '', nextPath);
+    }
+    setPathname(nextPath);
+  }, []);
 
   // Main state
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -285,10 +304,17 @@ function MainAppContent() {
     setCandidates(prev => [savedCand, ...prev.filter(candidate => candidate.id !== savedCand.id)]);
   };
 
-  // If user is not logged in, show Public Job Site as initial page, or LoginForm when requested
+  const normalizedPath = pathname.replace(/\/+$/, '') || '/';
+  const developerAreaRequested = normalizedPath === DEVELOPER_AREA_PATH;
+
+  // A rota técnica continua protegida pelo mesmo LoginForm/Firebase Authentication.
+  // Sem sessão, a URL nunca revela a interface da Área do Programador.
   if (!isAuthenticated) {
-    if (showLoginScreen) {
-      return <LoginForm onBackToJobs={() => setShowLoginScreen(false)} />;
+    if (showLoginScreen || developerAreaRequested) {
+      return <LoginForm onBackToJobs={() => {
+        setShowLoginScreen(false);
+        navigateToPath('/', true);
+      }} />;
     }
     return (
       <PublicJobsView
@@ -296,6 +322,15 @@ function MainAppContent() {
         onGoToLogin={() => setShowLoginScreen(true)}
       />
     );
+  }
+
+  // Rota própria e em página inteira: retorna antes de Navbar, Sidebar e do
+  // conteúdo central do Painel Master. O componente valida MASTER/Developer.
+  if (developerAreaRequested) {
+    return <DeveloperArea onBackToMaster={() => {
+      setActiveTab('acesso-master');
+      navigateToPath('/', true);
+    }} />;
   }
 
   // DESENVOLVEDOR possui experiência própria. Não renderiza Navbar, Sidebar,
@@ -579,6 +614,7 @@ function MainAppContent() {
             {(activeTab === 'acesso-master' || activeTab.startsWith('master-')) && (
               <MasterAdminView
                 key={activeTab}
+                onOpenDeveloperArea={() => navigateToPath(DEVELOPER_AREA_PATH)}
                 initialSection={
                   activeTab === 'master-empresas' ? 'empresas'
                     : activeTab === 'master-planos' ? 'planos-modulos'

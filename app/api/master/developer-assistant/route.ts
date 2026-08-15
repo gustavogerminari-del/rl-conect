@@ -3,7 +3,10 @@ import { normalizeSubmittedSecret, validateGeminiApiKey } from './geminiKey';
 import { callGeminiInteractions, type GeminiTier } from './geminiInteractions';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
-const DEVELOPER_ROLES = new Set(['DEVELOPER_ADMIN', 'developer_admin', 'DEVELOPER', 'DESENVOLVEDOR']);
+const TECHNICAL_ROLES = new Set([
+  'DEVELOPER_ADMIN', 'developer_admin', 'DEVELOPER', 'DESENVOLVEDOR',
+  'MASTER_ADMIN', 'master_admin', 'MASTER', 'SUPER_ADMINISTRADOR', 'Super Administrador',
+]);
 type AiProvider = 'openai' | 'gemini';
 
 class AiProviderError extends Error {
@@ -21,7 +24,7 @@ function decodeValue(value: any): any {
   return undefined;
 }
 
-async function requireDeveloper(request: Request) {
+async function requireTechnicalAccess(request: Request) {
   const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
   const apiKey = process.env.VITE_FIREBASE_API_KEY;
   const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
@@ -52,7 +55,7 @@ async function requireDeveloper(request: Request) {
     }
   }
   const role = String(profile?.role || profile?.tipoUsuario || '');
-  if (!profile || profile.ativo === false || !DEVELOPER_ROLES.has(role)) throw new Error('Acesso exclusivo do DESENVOLVEDOR.');
+  if (!profile || profile.ativo === false || !TECHNICAL_ROLES.has(role)) throw new Error('Acesso exclusivo de MASTER ou DESENVOLVEDOR.');
   return { uid, token, projectId };
 }
 
@@ -130,7 +133,7 @@ const publicFiles = () => SOURCE_CATALOG.map(file => ({ path: file.path, size: f
 
 export async function GET(request: Request) {
   try {
-    const access = await requireDeveloper(request);
+    const access = await requireTechnicalAccess(request);
     const path = new URL(request.url).searchParams.get('path');
     if (!path) {
       const credential = await readCredential(access);
@@ -222,7 +225,7 @@ async function consultGemini(apiKey: string, userContent: string, tier: GeminiTi
 
 export async function POST(request: Request) {
   try {
-    const access = await requireDeveloper(request);
+    const access = await requireTechnicalAccess(request);
     const { uid } = access;
     const body: any = await request.json();
     if (body?.action === 'configure_api_key' || body?.action === 'configure_provider_key') {

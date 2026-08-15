@@ -41,6 +41,9 @@ service cloud.firestore {
         (hasLegacy() && (developerRole(legacy().role) || developerRole(legacy().tipoUsuario)))
       );
     }
+    function technicalPlatformAccess() {
+      return master() || developer();
+    }
     function companyManagerRole(value) {
       return value in [
         'ADMIN_EMPRESA', 'ADMIN', 'ADMINISTRADOR', 'Administrador',
@@ -413,27 +416,27 @@ service cloud.firestore {
     match /master_settings/{id} { allow read, write: if master(); }
     match /master_idempotency/{id} { allow read, write: if master(); }
 
-    // Área do Programador: domínio técnico separado. Usuários de empresa e
-    // MASTER não herdam acesso Developer automaticamente.
+    // Área do Programador: domínio técnico separado. Somente identidades
+    // Firebase MASTER ou Developer da plataforma possuem acesso.
     match /developer_credentials/{id} {
-      allow read, create, update: if developer() && id == 'developer_credentials_' + request.auth.uid;
+      allow read, create, update: if technicalPlatformAccess() && id == 'developer_credentials_' + request.auth.uid;
       allow delete: if false;
     }
     match /developer_code_drafts/{id} {
-      allow read: if developer() && resource.data.createdBy == request.auth.uid;
-      allow create: if developer() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if developer() && resource.data.createdBy == request.auth.uid
+      allow read: if technicalPlatformAccess() && resource.data.createdBy == request.auth.uid;
+      allow create: if technicalPlatformAccess() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if technicalPlatformAccess() && resource.data.createdBy == request.auth.uid
         && request.resource.data.createdBy == request.auth.uid;
       allow delete: if false;
     }
     match /developer_visual_drafts/{id} {
-      allow read: if developer();
-      allow create: if developer() && request.resource.data.createdBy == request.auth.uid && request.resource.data.appliedToProduction == false;
+      allow read: if technicalPlatformAccess();
+      allow create: if technicalPlatformAccess() && request.resource.data.createdBy == request.auth.uid && request.resource.data.appliedToProduction == false;
       allow update, delete: if false;
     }
-    match /developer_logs/{id} { allow read, create: if developer(); allow update, delete: if false; }
-    match /developer_test_runs/{id} { allow read, create: if developer(); allow update, delete: if false; }
-    match /developer_versions/{id} { allow read, create: if developer(); allow update, delete: if false; }
+    match /developer_logs/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
+    match /developer_test_runs/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
+    match /developer_versions/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
 
     // Segredos OAuth e conteúdo sensível de entrevistas são acessados somente
     // pelas rotas autenticadas do backend. O service account ignora estas rules.

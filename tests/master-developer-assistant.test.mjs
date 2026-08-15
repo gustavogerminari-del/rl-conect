@@ -4,12 +4,13 @@ import { readFile } from 'node:fs/promises';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('assistente de desenvolvimento é exclusivo do DESENVOLVEDOR e usa OpenAI/Gemini somente no backend', async () => {
+test('assistente interno aceita MASTER/Developer e usa OpenAI/Gemini somente no backend', async () => {
   const route = await read('app/api/master/developer-assistant/route.ts');
   const geminiKey = await read('app/api/master/developer-assistant/geminiKey.ts');
   const view = await read('src/master-admin/components/MasterDeveloperAssistantView.tsx');
-  assert.match(route, /requireDeveloper\(request\)/);
+  assert.match(route, /requireTechnicalAccess\(request\)/);
   assert.match(route, /DEVELOPER_ADMIN/);
+  assert.match(route, /MASTER_ADMIN/);
   assert.match(route, /process\.env\.OPENAI_API_KEY/);
   assert.match(route, /https:\/\/api\.openai\.com\/v1\/responses/);
   assert.match(`${route}\n${geminiKey}`, /https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models/);
