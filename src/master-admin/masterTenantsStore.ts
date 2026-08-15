@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, query, where, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { sanitizeFirestoreData } from '../lib/firestoreUtils';
 import { AuditService } from '../services/AuditService';
@@ -159,16 +159,31 @@ async function deleteTenantOnServer(id: string): Promise<ServerDeleteResult> {
   };
 }
 
+async function linkedTenantProfileIds(id: string): Promise<Set<string>> {
+  const linked = new Map<string, Record<string, any>>();
+  const searches = await Promise.all([
+    getDocs(query(collection(db, 'usuarios'), where('empresaId', '==', id))),
+    getDocs(query(collection(db, 'usuarios'), where('companyId', '==', id))),
+    getDocs(query(collection(db, 'users'), where('empresaId', '==', id))),
+    getDocs(query(collection(db, 'users'), where('companyId', '==', id))),
+  ]);
+
+  searches.forEach(snapshot => snapshot.forEach(profileDoc => {
+    const raw = profileDoc.data() as Record<string, any>;
+    if (!isPlatformIdentity(raw.role, raw.tipoUsuario)) linked.set(profileDoc.id, raw);
+  }));
+  return new Set(linked.keys());
+}
+
 async function deleteTenantFromFirestore(id: string): Promise<number> {
-  // Fallback para ambientes em que a rota administrativa/Service Account ainda
-  // não está disponível. Remove empresa e perfis do Firestore; contas Auth ficam
-  // sem perfil e, portanto, sem acesso ao sistema até a limpeza administrativa.
-  const allUsers = await UserService.list();
-  const linkedUsers = allUsers.filter((user) => user.companyId === id && !isPlatformIdentity(user.role, user.tipoUsuario));
+  // Não depende mais da listagem visual de usuários. Procura o vínculo nos dois
+  // nomes de coleção e nos dois nomes de campo usados historicamente pelo projeto.
+  // Assim uma empresa excluída não deixa perfis órfãos por causa de companyId/empresaId.
+  const linkedUserIds = await linkedTenantProfileIds(id);
   const batch = writeBatch(db);
-  for (const user of linkedUsers) {
-    batch.delete(doc(db, 'usuarios', user.uid));
-    batch.delete(doc(db, 'users', user.uid));
+  for (const uid of linkedUserIds) {
+    batch.delete(doc(db, 'usuarios', uid));
+    batch.delete(doc(db, 'users', uid));
   }
   batch.delete(doc(db, 'empresa_modulos', id));
   batch.delete(doc(db, 'companyModules', id));
@@ -176,7 +191,7 @@ async function deleteTenantFromFirestore(id: string): Promise<number> {
   batch.delete(doc(db, 'tenants', id));
   batch.delete(doc(db, 'empresas', id));
   await batch.commit();
-  return linkedUsers.length;
+  return linkedUserIds.size;
 }
 
 export async function deleteTenant(id: string): Promise<ClientTenant[]> {
