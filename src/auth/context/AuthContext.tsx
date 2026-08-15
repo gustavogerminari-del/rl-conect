@@ -16,7 +16,7 @@ import { fetchEmpresaAccessRecord, fetchEmpresaModulosFirestore, fetchUsuarioFir
 import { auth, db } from '../../lib/firebase';
 import { PermissionService } from '../../services/PermissionService';
 import { buildProvisionedPermissions } from '../../services/provisionedPermissions';
-import { getCompanyId, isMasterProfile, toUserProfile } from '../profile';
+import { getCompanyId, isDeveloperProfile, isMasterProfile, toUserProfile } from '../profile';
 import { isTrialCompanyRecord, normalizeModuleEntitlements } from '../../services/AccessPolicyService';
 
 export interface AuthContextType {
@@ -93,7 +93,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loadModules = async (profile: UserProfile): Promise<Record<string, boolean>> => {
-    if (isMasterProfile(profile)) {
+    if (isMasterProfile(profile) || isDeveloperProfile(profile)) {
       setActiveModules({});
       setIsTrial(false);
       return {};
@@ -114,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     profile: UserProfile,
     companyModules: Record<string, boolean>
   ): Promise<UserProfile> => {
-    if (isMasterProfile(profile)) return profile;
+    if (isMasterProfile(profile) || isDeveloperProfile(profile)) return profile;
     const currentPermissions = Array.isArray(profile.permissions)
       ? profile.permissions
       : Object.entries(profile.permissions || {}).filter(([, enabled]) => enabled).map(([key]) => key);
