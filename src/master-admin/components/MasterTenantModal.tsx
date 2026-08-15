@@ -12,6 +12,14 @@ interface MasterTenantModalProps {
 
 type TabId = 'empresa' | 'plano' | 'modulos' | 'branding' | 'contrato' | 'administrador';
 
+type ViaCepResponse = {
+  erro?: boolean;
+  logradouro?: string;
+  bairro?: string;
+  localidade?: string;
+  uf?: string;
+};
+
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'empresa', label: 'Dados da Empresa' },
   { id: 'plano', label: 'Plano & Limites' },
@@ -41,6 +49,7 @@ const MODULE_LABELS: Array<[keyof TenantModulePermissions, string]> = [
 
 const baseInput = 'w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-amber-500';
 const labelClass = 'mb-1 block text-xs font-bold text-slate-400';
+const emptyAddress = { cep: '', street: '', number: '', complement: '', neighborhood: '', cityUf: '' };
 
 function emptyTenant(): ClientTenant {
   const today = new Date().toISOString().slice(0, 10);
@@ -53,7 +62,7 @@ function emptyTenant(): ClientTenant {
     ownerName: '',
     ownerEmail: '',
     ownerPhone: '',
-    address: { cep: '', street: '', number: '', complement: '', neighborhood: '', cityUf: '' },
+    address: { ...emptyAddress },
     adminCredentials: { adminEmail: '' },
     status: 'Ativo',
     maxUsers: 5,
@@ -95,6 +104,8 @@ export function MasterTenantModal({ tenant, onClose, onSave }: MasterTenantModal
   const [sendCredentialsEmail, setSendCredentialsEmail] = useState(true);
   const [linkedAdmin, setLinkedAdmin] = useState<UserProfile | null>(null);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
+  const [cepLoading, setCepLoading] = useState(false);
+  const [cepError, setCepError] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -103,6 +114,8 @@ export function MasterTenantModal({ tenant, onClose, onSave }: MasterTenantModal
     setAdminPassword('');
     setConfirmAdminPassword('');
     setSendCredentialsEmail(true);
+    setCepLoading(false);
+    setCepError('');
     setActiveTab('empresa');
   }, [tenant]);
 
@@ -128,10 +141,50 @@ export function MasterTenantModal({ tenant, onClose, onSave }: MasterTenantModal
   const moduleCount = useMemo(() => Object.values(form.modules).filter(Boolean).length, [form.modules]);
 
   const patch = (next: Partial<ClientTenant>) => setForm((current) => ({ ...current, ...next }));
-  const patchAddress = (key: string, value: string) => setForm((current) => ({ ...current, address: { ...(current.address || { cep: '', street: '', number: '', neighborhood: '', cityUf: '' }), [key]: value } }));
+  const patchAddress = (key: string, value: string) => setForm((current) => ({ ...current, address: { ...(current.address || emptyAddress), [key]: value } }));
   const patchContract = (key: string, value: unknown) => setForm((current) => ({ ...current, contract: { ...current.contract, [key]: value } }));
   const patchBranding = (key: string, value: string) => setForm((current) => ({ ...current, branding: { ...current.branding, [key]: value } }));
   const patchModule = (key: keyof TenantModulePermissions, value: boolean) => setForm((current) => ({ ...current, modules: { ...current.modules, [key]: value } }));
+
+  const lookupCep = async (rawCep: string) => {
+    const cep = rawCep.replace(/\D/g, '').slice(0, 8);
+    if (cep.length !== 8) return;
+
+    setCepLoading(true);
+    setCepError('');
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      if (!response.ok) throw new Error(`ViaCEP respondeu ${response.status}`);
+      const data = await response.json() as ViaCepResponse;
+      if (data.erro) {
+        setCepError('CEP não encontrado. Confira os 8 dígitos.');
+        return;
+      }
+
+      setForm((current) => ({
+        ...current,
+        address: {
+          ...(current.address || emptyAddress),
+          cep,
+          street: data.logradouro || '',
+          neighborhood: data.bairro || '',
+          cityUf: [data.localidade, data.uf].filter(Boolean).join(' / '),
+        },
+      }));
+    } catch (cepLookupError) {
+      console.warn('Não foi possível consultar o CEP no ViaCEP:', cepLookupError);
+      setCepError('Não foi possível consultar o CEP agora. Você pode preencher o endereço manualmente.');
+    } finally {
+      setCepLoading(false);
+    }
+  };
+
+  const handleCepChange = (value: string) => {
+    const cep = value.replace(/\D/g, '').slice(0, 8);
+    patchAddress('cep', cep);
+    setCepError('');
+    if (cep.length === 8) void lookupCep(cep);
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -190,7 +243,11 @@ export function MasterTenantModal({ tenant, onClose, onSave }: MasterTenantModal
             <Field label="Responsável / Contato"><input className={baseInput} value={form.ownerName} onChange={(e) => patch({ ownerName: e.target.value })} /></Field>
             <Field label="E-mail de contato"><input type="email" className={baseInput} value={form.ownerEmail} onChange={(e) => patch({ ownerEmail: e.target.value })} /></Field>
             <Field label="Telefone"><input className={baseInput} value={form.ownerPhone} onChange={(e) => patch({ ownerPhone: e.target.value })} /></Field>
-            <Field label="CEP"><input className={baseInput} value={form.address?.cep || ''} onChange={(e) => patchAddress('cep', e.target.value)} /></Field>
+            <Field label="CEP">
+              <input className={baseInput} value={form.address?.cep || ''} onChange={(e) => handleCepChange(e.target.value)} inputMode="numeric" maxLength={8} placeholder="00000000" />
+              {cepLoading && <span className="mt-1 block text-xs text-slate-400">Consultando endereço...</span>}
+              {cepError && <span className="mt-1 block text-xs text-rose-300">{cepError}</span>}
+            </Field>
             <Field label="Endereço"><input className={baseInput} value={form.address?.street || ''} onChange={(e) => patchAddress('street', e.target.value)} /></Field>
             <Field label="Número"><input className={baseInput} value={form.address?.number || ''} onChange={(e) => patchAddress('number', e.target.value)} /></Field>
             <Field label="Bairro"><input className={baseInput} value={form.address?.neighborhood || ''} onChange={(e) => patchAddress('neighborhood', e.target.value)} /></Field>
