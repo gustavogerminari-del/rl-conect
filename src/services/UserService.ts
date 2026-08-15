@@ -30,7 +30,7 @@ export interface UserProfile {
   role: string;
   companyId: string;
   colaboradorId?: string;
-  tipoUsuario?: 'MASTER' | 'ADMIN_EMPRESA' | 'EMPRESA' | 'CANDIDATO' | 'FUNCIONARIO';
+  tipoUsuario?: 'MASTER' | 'DEVELOPER' | 'ADMIN_EMPRESA' | 'EMPRESA' | 'CANDIDATO' | 'FUNCIONARIO';
   status: string;
   permissions?: string[];
   modules?: Record<string, boolean>;
@@ -172,24 +172,27 @@ async function createUserWithSecondaryFirebaseApp(input: {
     if (!createdUser) throw new Error('O Firebase Authentication não retornou o usuário criado.');
     await updateProfile(createdUser, { displayName: input.displayName });
 
-    const isMaster = input.role.trim().toUpperCase() === 'MASTER';
+    const normalizedRole = input.role.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const isMaster = ['MASTER', 'MASTER_ADMIN'].includes(normalizedRole);
+    const isDeveloper = ['DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'].includes(normalizedRole);
+    const isPlatformUser = isMaster || isDeveloper;
     const uid = createdUser.uid;
     const now = new Date().toISOString();
-    const empresaId = isMaster ? null : input.companyId;
+    const empresaId = isPlatformUser ? null : input.companyId;
     const profile = {
       uid,
       email: input.email,
       nome: input.displayName,
       displayName: input.displayName,
-      role: isMaster ? 'MASTER' : input.role,
-      perfil: isMaster ? 'MASTER' : input.role,
-      tipoUsuario: isMaster ? 'MASTER' : (input.tipoUsuario || 'EMPRESA'),
+      role: isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER_ADMIN' : input.role,
+      perfil: isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER_ADMIN' : input.role,
+      tipoUsuario: isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER' : (input.tipoUsuario || 'EMPRESA'),
       ativo: input.status === 'Ativo' || input.status === 'ATIVO',
       status: input.status,
       empresaId,
       companyId: empresaId,
-      companyName: isMaster ? '' : input.companyName,
-      colaboradorId: isMaster ? null : (input.colaboradorId || null),
+      companyName: isPlatformUser ? '' : input.companyName,
+      colaboradorId: isPlatformUser ? null : (input.colaboradorId || null),
       permissions: input.permissions,
       modules: input.modules || {},
       createdAt: now,
@@ -213,7 +216,7 @@ async function createUserWithSecondaryFirebaseApp(input: {
     const savedCompanyId = String(
       usuarioSnapshot.data()?.empresaId || usuarioSnapshot.data()?.companyId || ''
     ).trim();
-    if (!isMaster && savedCompanyId !== input.companyId) {
+    if (!isPlatformUser && savedCompanyId !== input.companyId) {
       throw new Error('A conta foi criada, mas o vínculo com a empresa ficou inválido.');
     }
     return uid;
@@ -240,7 +243,10 @@ export class UserService {
     const displayName = userData.displayName?.trim();
     const role = userData.role || 'Colaborador';
     const companyId = userData.companyId?.trim();
-    const isMaster = role.trim().toUpperCase() === 'MASTER';
+    const normalizedRole = role.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const isMaster = ['MASTER', 'MASTER_ADMIN'].includes(normalizedRole);
+    const isDeveloper = ['DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'].includes(normalizedRole);
+    const isPlatformUser = isMaster || isDeveloper;
     const status = userData.status || 'Ativo';
     const provisionedPermissions = buildProvisionedPermissions(
       role,
@@ -249,14 +255,14 @@ export class UserService {
       userData.tipoUsuario || ''
     );
     const isAtivo = status === 'Ativo';
-    if (!email || !displayName || (!isMaster && !companyId)) {
+    if (!email || !displayName || (!isPlatformUser && !companyId)) {
       throw new Error('Nome, e-mail e empresa válida são obrigatórios para criar um usuário comum.');
     }
     if (!userData.password || userData.password.length < 6) {
       throw new Error('Informe uma senha temporária com pelo menos 6 caracteres.');
     }
 
-    const companyName = isMaster ? '' : await resolveCompanyName(companyId!);
+    const companyName = isPlatformUser ? '' : await resolveCompanyName(companyId!);
 
     let uid: string;
     try {
@@ -267,7 +273,7 @@ export class UserService {
           password: userData.password,
           nome: displayName,
           role,
-          empresaId: isMaster ? null : companyId,
+          empresaId: isPlatformUser ? null : companyId,
           companyName,
           ativo: isAtivo,
           permissions: provisionedPermissions,
@@ -301,7 +307,7 @@ export class UserService {
         password: userData.password,
         displayName,
         role,
-        companyId: isMaster ? '' : companyId!,
+        companyId: isPlatformUser ? '' : companyId!,
         companyName,
         status,
         permissions: provisionedPermissions,
@@ -320,9 +326,9 @@ export class UserService {
       email,
       displayName,
       role,
-      companyId: isMaster ? '' : companyId!,
+      companyId: isPlatformUser ? '' : companyId!,
       colaboradorId: userData.colaboradorId,
-      tipoUsuario: userData.tipoUsuario || 'EMPRESA',
+      tipoUsuario: isDeveloper ? 'DEVELOPER' : userData.tipoUsuario || 'EMPRESA',
       status,
       permissions: provisionedPermissions,
       modules: userData.modules || {},
@@ -353,6 +359,8 @@ export class UserService {
       const role = String(data.role || current.role || '').trim();
       const normalizedRole = role.toUpperCase().replace(/[\s-]+/g, '_');
       const isMaster = normalizedRole === 'MASTER' || normalizedRole === 'MASTER_ADMIN';
+      const isDeveloper = ['DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'].includes(normalizedRole);
+      const isPlatformUser = isMaster || isDeveloper;
       const currentIsMaster = ['MASTER', 'MASTER_ADMIN'].includes(String(current.role || '').toUpperCase().replace(/[\s-]+/g, '_'));
       const requestedStatus = normalizedAccessRole(data.status ?? current.status);
       if (currentIsMaster && ['INATIVO', 'BLOQUEADO', 'SUSPENSO', 'DESATIVADO'].includes(requestedStatus)) {
@@ -362,11 +370,11 @@ export class UserService {
         throw new Error('A promoção ou remoção do perfil master_admin exige backend administrativo seguro.');
       }
       const companyId = String(data.companyId ?? current.companyId ?? '').trim();
-      const companyName = isMaster ? '' : await resolveCompanyName(companyId);
+      const companyName = isPlatformUser ? '' : await resolveCompanyName(companyId);
       try {
         await authorizedRequest(`/api/users/${encodeURIComponent(uid)}`, {
           method: 'PATCH',
-          body: JSON.stringify({ ...data, role, companyId: isMaster ? null : companyId, companyName }),
+          body: JSON.stringify({ ...data, role, companyId: isPlatformUser ? null : companyId, companyName }),
         });
       } catch (requestError: any) {
         const statusCode = Number(requestError?.status);
@@ -379,8 +387,8 @@ export class UserService {
         const profilePatch = {
           ...data,
           role,
-          empresaId: isMaster ? null : companyId,
-          companyId: isMaster ? null : companyId,
+          empresaId: isPlatformUser ? null : companyId,
+          companyId: isPlatformUser ? null : companyId,
           companyName,
           ativo: !['INATIVO', 'BLOQUEADO'].includes(status.toUpperCase()),
           status,
