@@ -16,7 +16,9 @@ test('modal permite editar cliente sem senha e exige senha apenas na criação',
 
 test('abas ficam todas acessíveis e desktop permite duas linhas sem overflow oculto', async () => {
   const modal = await read('src/master-admin/components/MasterTenantModal.tsx');
-  for (const label of ['Dados da Empresa', 'Plano & Limites', 'Módulos Liberados', 'Personalização / White-Label', 'Contrato', 'Administrador']) assert.match(modal, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const label of ['Dados da Empresa', 'Plano & Limites', 'Módulos Liberados', 'Personalização / White-Label', 'Contrato', 'Administrador']) {
+    assert.ok(modal.includes(label), `aba ausente: ${label}`);
+  }
   assert.match(modal, /overflow-x-auto/);
   assert.match(modal, /md:grid-cols-3/);
   assert.match(modal, /xl:grid-cols-6/);
@@ -25,7 +27,10 @@ test('abas ficam todas acessíveis e desktop permite duas linhas sem overflow oc
 
 test('edição comum não recria administrador nem persiste senha', async () => {
   const store = await read('src/master-admin/masterTenantsStore.ts');
-  const editBlock = store.slice(store.indexOf("if (!isCreate)"), store.indexOf('await persistTenant(tenant);', store.indexOf("if (!isCreate)")) + 1000);
+  const editStart = store.indexOf('// Edição comum nunca provisiona usuário');
+  const creationStart = store.indexOf('\n\n  await persistTenant(tenant);', editStart);
+  assert.ok(editStart >= 0 && creationStart > editStart, 'bloco de edição não localizado');
+  const editBlock = store.slice(editStart, creationStart);
   assert.doesNotMatch(editBlock, /UserService\.create/);
   assert.match(store, /adminPassword: _password/);
   assert.match(store, /confirmAdminPassword: _confirmation/);
@@ -36,6 +41,7 @@ test('Gemini substitui OpenAI e status legado não é reaproveitado', async () =
   const wrapper = await read('src/master-admin/components/MasterAdminView.tsx');
   const service = await read('src/master-admin/services/masterOperationalService.ts');
   assert.match(wrapper, /Gemini \/ IA/);
+  assert.match(wrapper, /CONFIGURAÇÃO PENDENTE/);
   assert.match(service, /item\.name\.trim\(\)\.toLowerCase\(\) !== 'openai \/ ia'/);
   assert.match(service, /\/gemini\/i\.test\(item\.name\)/);
 });
