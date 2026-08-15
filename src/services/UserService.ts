@@ -1,9 +1,9 @@
-import { 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  query, 
+import {
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  query,
   where,
   writeBatch,
 } from 'firebase/firestore';
@@ -17,7 +17,6 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import { db, auth } from '../lib/firebase';
-import { firebaseConfig } from './firebaseConfig';
 import { AuditService } from './AuditService';
 import { buildProvisionedPermissions } from './provisionedPermissions';
 
@@ -67,6 +66,16 @@ const normalizeProfile = (uid: string, raw: RawUserProfile): UserProfile => ({
   createdAt: raw.createdAt || '',
   updatedAt: raw.updatedAt || '',
 });
+
+async function safeAudit(input: Parameters<typeof AuditService.log>[0], context: string): Promise<void> {
+  try {
+    await AuditService.log(input);
+  } catch (error) {
+    // O acesso já foi alterado. Falha de auditoria não pode virar falso erro de
+    // permissão nem induzir o Master a repetir a operação e criar inconsistência.
+    console.warn(`[UserService] ${context} concluído, mas a auditoria falhou.`, error);
+  }
+}
 
 async function resolveCompanyName(companyId: string): Promise<string> {
   const companySnapshot = await getDoc(doc(db, 'empresas', companyId));
@@ -119,6 +128,16 @@ async function authorizedRequest(path: string, init: RequestInit): Promise<any> 
   return result;
 }
 
+function canUseClientFirebaseFallback(error: any, allowedStatuses: number[]): boolean {
+  const statusCode = Number(error?.status);
+  const message = String(error?.message || '');
+  // ChatGPT Sites pode servir o index.html para uma rota de API inexistente e
+  // responder HTTP 200. Nesse caso "formato inesperado" significa que o backend
+  // administrativo não está disponível, não que a sessão MASTER foi negada.
+  return allowedStatuses.includes(statusCode)
+    || /provisionamento administrativo|not found|formato inesperado|JSON inválido|API respondeu em formato inesperado|HTTP\s*(404|405|501)/i.test(message);
+}
+
 async function createUserWithSecondaryFirebaseApp(input: {
   email: string;
   password: string;
@@ -133,7 +152,9 @@ async function createUserWithSecondaryFirebaseApp(input: {
   colaboradorId?: string;
 }): Promise<string> {
   const appName = `maisrh-provision-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const secondaryApp = initializeApp(firebaseConfig, appName);
+  // Usa exatamente as opções da instância Firebase autenticada. Assim não existe
+  // uma segunda configuração divergente entre o Painel Master e o usuário criado.
+  const secondaryApp = initializeApp(auth.app.options, appName);
   const secondaryAuth = getAuth(secondaryApp);
   let createdUser: Awaited<ReturnType<typeof createUserWithEmailAndPassword>>['user'] | null = null;
   let createdNewAuthUser = false;
@@ -150,8 +171,8 @@ async function createUserWithSecondaryFirebaseApp(input: {
           : '';
       if (createErrorCode !== 'auth/email-already-in-use') throw createError;
 
-      // Reparação segura: se a conta já existe no Authentication, confirme a
-      // senha fornecida e use o UID real para recriar/vincular os perfis.
+      // Compatibilidade para empresa recriada quando a conta Auth antiga ainda
+      // não foi removida. A senha informada precisa pertencer à própria conta.
       try {
         const credential = await signInWithEmailAndPassword(secondaryAuth, input.email, input.password);
         createdUser = credential.user;
@@ -162,7 +183,7 @@ async function createUserWithSecondaryFirebaseApp(input: {
             : '';
         if (signInErrorCode === 'auth/invalid-credential') {
           throw new Error(
-            'Este e-mail já existe no Firebase Authentication, mas a senha informada não corresponde. Redefina a senha e tente salvar o acesso novamente.'
+            'Este e-mail já existe no Firebase Authentication, mas a senha informada não corresponde. Use a redefinição de senha antes de recriar este acesso.'
           );
         }
         throw signInError;
@@ -172,7 +193,7 @@ async function createUserWithSecondaryFirebaseApp(input: {
     if (!createdUser) throw new Error('O Firebase Authentication não retornou o usuário criado.');
     await updateProfile(createdUser, { displayName: input.displayName });
 
-    const normalizedRole = input.role.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const normalizedRole = normalizedAccessRole(input.role);
     const isMaster = ['MASTER', 'MASTER_ADMIN'].includes(normalizedRole);
     const isDeveloper = ['DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'].includes(normalizedRole);
     const isPlatformUser = isMaster || isDeveloper;
@@ -187,17 +208,20 @@ async function createUserWithSecondaryFirebaseApp(input: {
       role: isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER_ADMIN' : input.role,
       perfil: isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER_ADMIN' : input.role,
       tipoUsuario: isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER' : (input.tipoUsuario || 'EMPRESA'),
-      ativo: input.status === 'Ativo' || input.status === 'ATIVO',
+      ativo: ['ATIVO', 'ATIVA'].includes(normalizedAccessRole(input.status)),
       status: input.status,
       empresaId,
       companyId: empresaId,
       companyName: isPlatformUser ? '' : input.companyName,
       colaboradorId: isPlatformUser ? null : (input.colaboradorId || null),
       permissions: input.permissions,
+      permissoes: input.permissions,
       modules: input.modules || {},
+      modulos: input.modules || {},
       createdAt: now,
       updatedAt: now,
       createdBy: auth.currentUser?.uid || 'MASTER',
+      updatedBy: auth.currentUser?.uid || 'MASTER',
     };
 
     const batch = writeBatch(db);
@@ -205,17 +229,12 @@ async function createUserWithSecondaryFirebaseApp(input: {
     batch.set(doc(db, 'users', uid), profile, { merge: true });
     await batch.commit();
 
-    const [usuarioSnapshot, userSnapshot] = await Promise.all([
-      getDoc(doc(db, 'usuarios', uid)),
-      getDoc(doc(db, 'users', uid)),
-    ]);
-    if (!usuarioSnapshot.exists() || !userSnapshot.exists()) {
-      throw new Error('A conta foi criada, mas o vínculo completo do perfil não pôde ser confirmado.');
+    // `usuarios` é o documento oficial. `users` é espelho de compatibilidade.
+    const usuarioSnapshot = await getDoc(doc(db, 'usuarios', uid));
+    if (!usuarioSnapshot.exists()) {
+      throw new Error('A conta foi criada, mas o perfil oficial em usuarios não pôde ser confirmado.');
     }
-
-    const savedCompanyId = String(
-      usuarioSnapshot.data()?.empresaId || usuarioSnapshot.data()?.companyId || ''
-    ).trim();
+    const savedCompanyId = String(usuarioSnapshot.data()?.empresaId || usuarioSnapshot.data()?.companyId || '').trim();
     if (!isPlatformUser && savedCompanyId !== input.companyId) {
       throw new Error('A conta foi criada, mas o vínculo com a empresa ficou inválido.');
     }
@@ -243,7 +262,7 @@ export class UserService {
     const displayName = userData.displayName?.trim();
     const role = userData.role || 'Colaborador';
     const companyId = userData.companyId?.trim();
-    const normalizedRole = role.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const normalizedRole = normalizedAccessRole(role);
     const isMaster = ['MASTER', 'MASTER_ADMIN'].includes(normalizedRole);
     const isDeveloper = ['DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'].includes(normalizedRole);
     const isPlatformUser = isMaster || isDeveloper;
@@ -254,7 +273,7 @@ export class UserService {
       userData.modules || {},
       userData.tipoUsuario || ''
     );
-    const isAtivo = status === 'Ativo';
+    const isAtivo = ['ATIVO', 'ATIVA'].includes(normalizedAccessRole(status));
     if (!email || !displayName || (!isPlatformUser && !companyId)) {
       throw new Error('Nome, e-mail e empresa válida são obrigatórios para criar um usuário comum.');
     }
@@ -284,13 +303,7 @@ export class UserService {
       if (!resData.uid) throw new Error('A API não retornou o UID do usuário criado.');
       uid = resData.uid;
     } catch (err: any) {
-      const statusCode = Number(err?.status);
-      const message = String(err?.message || '');
-      const shouldUseIsolatedFirebase =
-        [404, 501].includes(statusCode) ||
-        /provisionamento administrativo|not found|HTTP\s*(404|501)/i.test(message);
-
-      if (!shouldUseIsolatedFirebase) {
+      if (!canUseClientFirebaseFallback(err, [404, 501])) {
         console.error('Erro ao chamar API de criação de usuário:', err);
         throw err;
       }
@@ -299,9 +312,8 @@ export class UserService {
         throw new Error('O serviço autorizado de criação de acesso não está disponível. O acesso deverá ser criado posteriormente.');
       }
 
-      // Sites publica o cliente sem o servidor Express. Uma segunda instância
-      // do Firebase Auth cria a conta sem derrubar a sessão MASTER; a gravação
-      // do perfil continua protegida pelas regras Firestore e tem rollback.
+      // Sites pode publicar apenas o SPA. A segunda instância do Firebase cria o
+      // Auth sem derrubar a sessão MASTER e os perfis continuam protegidos pelas rules.
       uid = await createUserWithSecondaryFirebaseApp({
         email,
         password: userData.password,
@@ -337,100 +349,95 @@ export class UserService {
       updatedAt: now
     };
 
-    try {
-      await AuditService.log({
-        action: 'CREATE',
-        description: `Usuário ${profile.displayName} (${profile.email}) criado`,
-        moduleName: 'Configurações',
-        targetEntity: 'Usuário',
-        companyId: profile.companyId
-      });
-    } catch (err) {
-      console.warn('Usuário criado, mas o log de auditoria não pôde ser registrado:', err);
-    }
+    await safeAudit({
+      action: 'CREATE',
+      description: `Usuário ${profile.displayName} (${profile.email}) criado`,
+      moduleName: 'Configurações',
+      targetEntity: 'Usuário',
+      companyId: profile.companyId
+    }, 'Criação do usuário');
 
     return profile;
   }
 
   static async update(uid: string, data: Partial<UserProfile>): Promise<void> {
-    try {
-      const current = await this.getById(uid);
-      if (!current) throw new Error('Usuário não encontrado.');
-      const role = String(data.role || current.role || '').trim();
-      const normalizedRole = role.toUpperCase().replace(/[\s-]+/g, '_');
-      const isMaster = normalizedRole === 'MASTER' || normalizedRole === 'MASTER_ADMIN';
-      const isDeveloper = ['DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'].includes(normalizedRole);
-      const isPlatformUser = isMaster || isDeveloper;
-      const currentIsMaster = ['MASTER', 'MASTER_ADMIN'].includes(String(current.role || '').toUpperCase().replace(/[\s-]+/g, '_'));
-      const requestedStatus = normalizedAccessRole(data.status ?? current.status);
-      if (currentIsMaster && ['INATIVO', 'BLOQUEADO', 'SUSPENSO', 'DESATIVADO'].includes(requestedStatus)) {
-        throw new Error('O acesso MASTER é protegido e não pode ser bloqueado ou desativado.');
-      }
-      if (isMaster !== currentIsMaster) {
-        throw new Error('A promoção ou remoção do perfil master_admin exige backend administrativo seguro.');
-      }
-      const companyId = String(data.companyId ?? current.companyId ?? '').trim();
-      const companyName = isPlatformUser ? '' : await resolveCompanyName(companyId);
-      try {
-        await authorizedRequest(`/api/users/${encodeURIComponent(uid)}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ ...data, role, companyId: isPlatformUser ? null : companyId, companyName }),
-        });
-      } catch (requestError: any) {
-        const statusCode = Number(requestError?.status);
-        const message = String(requestError?.message || '');
-        const canUseFirestoreFallback = [404, 405, 501].includes(statusCode) || /not found|HTTP\s*(404|405|501)/i.test(message);
-        if (!canUseFirestoreFallback) throw requestError;
-
-        const now = new Date().toISOString();
-        const status = String(data.status || current.status || 'Ativo');
-        const profilePatch = {
-          ...data,
-          role,
-          empresaId: isPlatformUser ? null : companyId,
-          companyId: isPlatformUser ? null : companyId,
-          companyName,
-          ativo: !['INATIVO', 'BLOQUEADO'].includes(status.toUpperCase()),
-          status,
-          updatedAt: now,
-          updatedBy: auth.currentUser?.uid || 'system',
-        };
-        const batch = writeBatch(db);
-        batch.set(doc(db, 'usuarios', uid), profilePatch, { merge: true });
-        batch.set(doc(db, 'users', uid), profilePatch, { merge: true });
-        await batch.commit();
-      }
-
-      await AuditService.log({
-        action: 'UPDATE',
-        description: `Perfil do usuário ${uid} atualizado`,
-        moduleName: 'Configurações',
-        targetEntity: 'Usuário',
-        companyId: data.companyId
-      });
-    } catch (err) {
-      console.error('Erro ao atualizar usuário no Firestore:', err);
-      throw err;
+    const current = await this.getById(uid);
+    if (!current) throw new Error('Usuário não encontrado.');
+    const role = String(data.role || current.role || '').trim();
+    const normalizedRole = normalizedAccessRole(role);
+    const isMaster = normalizedRole === 'MASTER' || normalizedRole === 'MASTER_ADMIN';
+    const isDeveloper = ['DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'].includes(normalizedRole);
+    const isPlatformUser = isMaster || isDeveloper;
+    const currentIsMaster = ['MASTER', 'MASTER_ADMIN'].includes(normalizedAccessRole(current.role));
+    const requestedStatus = normalizedAccessRole(data.status ?? current.status);
+    if (currentIsMaster && ['INATIVO', 'BLOQUEADO', 'SUSPENSO', 'DESATIVADO'].includes(requestedStatus)) {
+      throw new Error('O acesso MASTER é protegido e não pode ser bloqueado ou desativado.');
     }
+    if (isMaster !== currentIsMaster) {
+      throw new Error('A promoção ou remoção do perfil master_admin exige backend administrativo seguro.');
+    }
+    const companyId = String(data.companyId ?? current.companyId ?? '').trim();
+    const companyName = isPlatformUser ? '' : await resolveCompanyName(companyId);
+    const modules = data.modules || current.modules || {};
+    const permissions = buildProvisionedPermissions(
+      role,
+      data.permissions || current.permissions || [],
+      modules,
+      data.tipoUsuario || current.tipoUsuario || ''
+    );
+
+    try {
+      await authorizedRequest(`/api/users/${encodeURIComponent(uid)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...data, role, companyId: isPlatformUser ? null : companyId, companyName, modules, permissions }),
+      });
+    } catch (requestError: any) {
+      if (!canUseClientFirebaseFallback(requestError, [404, 405, 501])) throw requestError;
+
+      const now = new Date().toISOString();
+      const status = String(data.status || current.status || 'Ativo');
+      const profilePatch = {
+        ...data,
+        role,
+        empresaId: isPlatformUser ? null : companyId,
+        companyId: isPlatformUser ? null : companyId,
+        companyName,
+        permissions,
+        permissoes: permissions,
+        modules,
+        modulos: modules,
+        ativo: !['INATIVO', 'BLOQUEADO', 'SUSPENSO', 'DESATIVADO'].includes(normalizedAccessRole(status)),
+        status,
+        updatedAt: now,
+        updatedBy: auth.currentUser?.uid || 'system',
+      };
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'usuarios', uid), profilePatch, { merge: true });
+      batch.set(doc(db, 'users', uid), profilePatch, { merge: true });
+      await batch.commit();
+    }
+
+    await safeAudit({
+      action: 'UPDATE',
+      description: `Perfil do usuário ${uid} atualizado`,
+      moduleName: 'Configurações',
+      targetEntity: 'Usuário',
+      companyId: isPlatformUser ? undefined : companyId,
+    }, 'Atualização do usuário');
   }
 
   static async delete(uid: string): Promise<void> {
-    try {
-      const current = await this.getById(uid);
-      if (isProtectedMasterProfile(current)) {
-        throw new Error('O acesso MASTER é protegido e não pode ser excluído.');
-      }
-      await authorizedRequest(`/api/users/${encodeURIComponent(uid)}`, { method: 'DELETE' });
-      await AuditService.log({
-        action: 'DELETE',
-        description: `Usuário ${uid} excluído`,
-        moduleName: 'Configurações',
-        targetEntity: 'Usuário'
-      });
-    } catch (err) {
-      console.error('Erro ao excluir usuário no Firestore:', err);
-      throw err;
+    const current = await this.getById(uid);
+    if (isProtectedMasterProfile(current)) {
+      throw new Error('O acesso MASTER é protegido e não pode ser excluído.');
     }
+    await authorizedRequest(`/api/users/${encodeURIComponent(uid)}`, { method: 'DELETE' });
+    await safeAudit({
+      action: 'DELETE',
+      description: `Usuário ${uid} excluído`,
+      moduleName: 'Configurações',
+      targetEntity: 'Usuário'
+    }, 'Exclusão do usuário');
   }
 
   static async getById(uid: string): Promise<UserProfile | null> {
@@ -451,15 +458,13 @@ export class UserService {
 
   static async list(companyId?: string): Promise<UserProfile[]> {
     try {
-      const q = companyId 
+      const q = companyId
         ? query(collection(db, COLLECTION_NAME), where('empresaId', '==', companyId))
         : collection(db, COLLECTION_NAME);
       const snap = await getDocs(q);
       if (!snap.empty) {
         const list: UserProfile[] = [];
         snap.forEach(d => list.push(normalizeProfile(d.id, d.data() as RawUserProfile)));
-        // Consultas de uma empresa jamais recebem identidades da plataforma,
-        // mesmo que um documento MASTER tenha sido vinculado por engano.
         return companyId ? list.filter(user => !isProtectedMasterProfile(user)) : list;
       }
     } catch (err) {
@@ -471,8 +476,8 @@ export class UserService {
   static async search(term: string, companyId?: string): Promise<UserProfile[]> {
     const all = await this.list(companyId);
     const lower = term.toLowerCase();
-    return all.filter(u => 
-      u.displayName.toLowerCase().includes(lower) || 
+    return all.filter(u =>
+      u.displayName.toLowerCase().includes(lower) ||
       u.email.toLowerCase().includes(lower) ||
       u.role.toLowerCase().includes(lower)
     );
