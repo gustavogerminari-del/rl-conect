@@ -18,12 +18,27 @@ service cloud.firestore {
     function profileIsMaster(data) {
       return data != null && (masterRole(data.role) || masterRole(data.tipoUsuario));
     }
+    function developerRole(value) {
+      return value in ['developer_admin', 'DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'];
+    }
+    function profileIsDeveloper(data) {
+      return data != null && (developerRole(data.role) || developerRole(data.tipoUsuario));
+    }
+    function profileIsPlatform(data) {
+      return profileIsMaster(data) || profileIsDeveloper(data);
+    }
     function master() {
       // A identidade MASTER pertence à plataforma e não pode ser derrubada por
       // status, empresa ou alteração feita por um usuário de tenant.
       return signedIn() && (
         (hasPrimary() && (masterRole(primary().role) || masterRole(primary().tipoUsuario))) ||
         (hasLegacy() && (masterRole(legacy().role) || masterRole(legacy().tipoUsuario)))
+      );
+    }
+    function developer() {
+      return active() && (
+        (hasPrimary() && (developerRole(primary().role) || developerRole(primary().tipoUsuario))) ||
+        (hasLegacy() && (developerRole(legacy().role) || developerRole(legacy().tipoUsuario)))
       );
     }
     function companyManagerRole(value) {
@@ -278,14 +293,14 @@ service cloud.firestore {
     match /_health/{id} { allow read: if true; allow write: if false; }
 
     match /usuarios/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsMaster(resource.data)));
+      allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsPlatform(resource.data)));
       allow create, delete: if master();
-      allow update: if master() || (companyManager() && !profileIsMaster(resource.data) && !profileIsMaster(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow update: if master() || (companyManager() && !profileIsPlatform(resource.data) && !profileIsPlatform(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
     }
     match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsMaster(resource.data)));
+      allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsPlatform(resource.data)));
       allow create, delete: if master();
-      allow update: if master() || (companyManager() && !profileIsMaster(resource.data) && !profileIsMaster(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow update: if master() || (companyManager() && !profileIsPlatform(resource.data) && !profileIsPlatform(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
     }
     match /empresas/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
     match /companies/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
@@ -397,6 +412,28 @@ service cloud.firestore {
     match /master_backups/{id} { allow read, write: if master(); }
     match /master_settings/{id} { allow read, write: if master(); }
     match /master_idempotency/{id} { allow read, write: if master(); }
+
+    // Área do Programador: domínio técnico separado. Usuários de empresa e
+    // MASTER não herdam acesso Developer automaticamente.
+    match /developer_credentials/{id} {
+      allow read, create, update: if developer() && id == 'developer_credentials_' + request.auth.uid;
+      allow delete: if false;
+    }
+    match /developer_code_drafts/{id} {
+      allow read: if developer() && resource.data.createdBy == request.auth.uid;
+      allow create: if developer() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if developer() && resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid;
+      allow delete: if false;
+    }
+    match /developer_visual_drafts/{id} {
+      allow read: if developer();
+      allow create: if developer() && request.resource.data.createdBy == request.auth.uid && request.resource.data.appliedToProduction == false;
+      allow update, delete: if false;
+    }
+    match /developer_logs/{id} { allow read, create: if developer(); allow update, delete: if false; }
+    match /developer_test_runs/{id} { allow read, create: if developer(); allow update, delete: if false; }
+    match /developer_versions/{id} { allow read, create: if developer(); allow update, delete: if false; }
 
     // Segredos OAuth e conteúdo sensível de entrevistas são acessados somente
     // pelas rotas autenticadas do backend. O service account ignora estas rules.
