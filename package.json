@@ -10,6 +10,8 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
     "build": "bash scripts/build-verified.sh",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "deploy": "npm run build && wrangler deploy --config dist/server/wrangler.json",
+    "preview": "npm run build && wrangler dev --config dist/server/wrangler.json",
     "test": "npm run build && node --test --test-force-exit tests/*.test.mjs && node --import tsx --test tests/*.test.ts",
     "test:e2e": "PLAYWRIGHT_BROWSERS_PATH=.playwright-browsers playwright test",
     "test:e2e:report": "playwright show-report artifacts/e2e/report",
