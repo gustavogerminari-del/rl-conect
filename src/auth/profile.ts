@@ -32,6 +32,13 @@ export const isMasterProfile = (profile?: Partial<RawUserProfile | UserProfile> 
   return ['MASTER_ADMIN', 'MASTER'].includes(role) || ['MASTER_ADMIN', 'MASTER'].includes(userType);
 };
 
+export const isDeveloperProfile = (profile?: Partial<RawUserProfile | UserProfile> | null): boolean => {
+  const role = normalizeRole(profile?.role);
+  const userType = normalizeRole(profile?.tipoUsuario);
+  return ['DEVELOPER_ADMIN', 'DESENVOLVEDOR'].includes(role)
+    || ['DEVELOPER', 'DEVELOPER_ADMIN', 'DESENVOLVEDOR'].includes(userType);
+};
+
 export const getCompanyId = (profile?: Partial<RawUserProfile | UserProfile> | null): string | null => {
   const value = profile?.empresaId || profile?.companyId || profile?.tenantId;
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -96,8 +103,9 @@ export function toUserProfile(uid: string, raw: RawUserProfile, authData: {
   const role = normalizeRole(raw.role || raw.tipoUsuario);
   if (!role) throw new Error('Perfil sem papel de acesso (role). Contate o administrador.');
   const master = isMasterProfile(raw);
+  const developer = isDeveloperProfile(raw);
   const companyId = getCompanyId(raw);
-  if (!master && !companyId) throw new Error('Perfil sem empresa vinculada. Contate o administrador.');
+  if (!master && !developer && !companyId) throw new Error('Perfil sem empresa vinculada. Contate o administrador.');
   const status = normalizeRole(raw.status);
   // MASTER é uma identidade da plataforma, não um usuário de empresa. O acesso
   // de emergência da plataforma nunca pode ser invalidado por status empresarial.
@@ -108,8 +116,8 @@ export function toUserProfile(uid: string, raw: RawUserProfile, authData: {
     id: uid,
     name: raw.nome || raw.name || raw.displayName || authData.displayName || authData.email?.split('@')[0] || 'Usuário',
     email: authData.email || raw.email || '',
-    role: master ? 'MASTER' : role,
-    tipoUsuario: master ? 'MASTER' : (raw.tipoUsuario as UserProfile['tipoUsuario']) || 'EMPRESA',
+    role: master ? 'MASTER' : developer ? 'DEVELOPER_ADMIN' : role,
+    tipoUsuario: master ? 'MASTER' : developer ? 'DEVELOPER' : (raw.tipoUsuario as UserProfile['tipoUsuario']) || 'EMPRESA',
     department: String(raw.departamento || ''),
     avatar: authData.photoURL || '',
     empresaId: companyId || undefined,
