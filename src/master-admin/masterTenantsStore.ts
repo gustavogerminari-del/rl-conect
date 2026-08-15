@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDocs, setDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { sanitizeFirestoreData } from '../lib/firestoreUtils';
 import { AuditService } from '../services/AuditService';
@@ -11,6 +11,11 @@ const newTenantId = () => `empresa-${Date.now()}-${Math.random().toString(36).sl
 const DEFAULT_MODULES: TenantModulePermissions = { recrutamento: true, departamentoPessoal: false, vagas: true, headhunter: false, bancoTalentos: true, entrevistas: true, equipeInterna: true, consultorRH: true, feriasBeneficios: false, documentosAssinatura: false, auditoriaLogs: false, relatoriosAvancados: false, siteVagasPersonalizado: false, folha: false, ponto: false };
 const normalizeModules = (value?: Partial<TenantModulePermissions>): TenantModulePermissions => ({ ...DEFAULT_MODULES, ...(value || {}) });
 const modulesForUser = (modules: TenantModulePermissions): Record<string, boolean> => Object.fromEntries(Object.entries(modules).map(([key, value]) => [key, Boolean(value)]));
+const normalizeRole = (value: unknown) => String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+const isPlatformIdentity = (role: unknown, tipoUsuario: unknown) => {
+  const values = [normalizeRole(role), normalizeRole(tipoUsuario)];
+  return values.some((value) => ['MASTER', 'MASTER_ADMIN', 'DEVELOPER', 'DEVELOPER_ADMIN', 'DESENVOLVEDOR'].includes(value));
+};
 
 export function normalizeTenantRecord(id: string, raw: Record<string, any>): ClientTenant {
   const source = raw.rawTenantData && typeof raw.rawTenantData === 'object' ? raw.rawTenantData : raw;
@@ -79,4 +84,29 @@ export async function saveTenantAsync(input: TenantSaveInput): Promise<ClientTen
 }
 
 export async function toggleTenantStatus(id: string, currentStatus: TenantStatus): Promise<ClientTenant[]> { const nextStatus: TenantStatus = currentStatus === 'Ativo' ? 'Suspenso' : 'Ativo'; await setDoc(doc(db, 'empresas', id), sanitizeFirestoreData({ status: nextStatus, updatedAt: nowIso(), updatedBy: auth.currentUser?.uid || 'MASTER' }), { merge: true }); await AuditService.log({ action: 'UPDATE', description: `Empresa ${id} alterada para ${nextStatus}`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: id }); return syncTenantsFromFirestore(); }
-export async function deleteTenant(id: string): Promise<ClientTenant[]> { await Promise.allSettled([deleteDoc(doc(db, 'empresa_modulos', id)), deleteDoc(doc(db, 'empresas', id))]); await AuditService.log({ action: 'DELETE', description: `Empresa ${id} removida do cadastro Master`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: id }); return syncTenantsFromFirestore(); }
+
+export async function deleteTenant(id: string): Promise<ClientTenant[]> {
+  // Excluir uma empresa também precisa revogar os perfis vinculados. Antes desta
+  // correção apenas `empresas` e `empresa_modulos` eram apagados, deixando os
+  // acessos órfãos visíveis em Usuários e Permissões.
+  const allUsers = await UserService.list();
+  const linkedUsers = allUsers.filter((user) => user.companyId === id && !isPlatformIdentity(user.role, user.tipoUsuario));
+
+  const batch = writeBatch(db);
+  for (const user of linkedUsers) {
+    batch.delete(doc(db, 'usuarios', user.uid));
+    batch.delete(doc(db, 'users', user.uid));
+  }
+  batch.delete(doc(db, 'empresa_modulos', id));
+  batch.delete(doc(db, 'empresas', id));
+  await batch.commit();
+
+  await AuditService.log({
+    action: 'DELETE',
+    description: `Empresa ${id} removida do cadastro Master e ${linkedUsers.length} acesso(s) vinculado(s) revogado(s) do Firestore`,
+    moduleName: 'Painel Master',
+    targetEntity: 'Empresa',
+    companyId: id,
+  });
+  return syncTenantsFromFirestore();
+}
