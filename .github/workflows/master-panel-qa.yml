@@ -11,6 +11,7 @@ on:
       - 'scripts/build-verified.sh'
       - 'scripts/sites-env.sh'
       - 'scripts/validate-artifact.sh'
+      - 'scripts/generate-source-catalog.mjs'
       - '.github/workflows/master-panel-qa.yml'
   workflow_dispatch:
 
