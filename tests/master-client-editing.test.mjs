@@ -52,3 +52,33 @@ test('login do Painel Master permanece Firebase Authentication', async () => {
   assert.match(view, /Firebase Authentication/);
   assert.doesNotMatch(view, /signInWithGoogle|GoogleAuthProvider/);
 });
+
+test('menu do Painel Master expõe Área do Programador e possui rolagem vertical própria', async () => {
+  const wrapper = await read('src/master-admin/components/MasterAdminView.tsx');
+  const index = await read('src/master-admin/index.ts');
+
+  for (const label of [
+    'Visão Geral',
+    'Leads',
+    'Empresas',
+    'Usuários e Permissões',
+    'Planos e Módulos',
+    'Financeiro',
+    'Faturamento / NFS-e',
+    'Suporte Técnico',
+    'Integrações / API',
+    'Backup',
+    'Auditoria e Logs',
+    'Configurações',
+    'Área do Programador',
+  ]) {
+    assert.ok(wrapper.includes(label), `item de menu ausente: ${label}`);
+  }
+
+  assert.match(wrapper, /MasterDeveloperAssistantView/);
+  assert.match(wrapper, /height: calc\(100vh - 73px\)/);
+  assert.match(wrapper, /overflow-y: auto/);
+  assert.match(wrapper, /validarAcessoMaster/);
+  assert.match(index, /export \{ MasterAdminView \} from '\.\/components\/MasterAdminView'/);
+  assert.doesNotMatch(index, /export \* from '\.\/components\/MasterAdminOfficialView'/);
+});
