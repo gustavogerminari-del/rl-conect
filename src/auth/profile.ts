@@ -53,45 +53,47 @@ export const requireCompanyId = (
   return companyId;
 };
 
+const normalizeFlags = (
+  value?: Record<string, boolean> | string[]
+): Record<string, boolean> => {
+  const result: Record<string, boolean> = {};
+  if (Array.isArray(value)) {
+    value.forEach(key => { if (key) result[key] = true; });
+  } else if (value && typeof value === 'object') {
+    Object.entries(value).forEach(([key, enabled]) => { result[key] = enabled === true; });
+  }
+  return result;
+};
+
+/**
+ * `usuarios/{uid}` é a fonte oficial. `users/{uid}` existe apenas para
+ * compatibilidade com acessos antigos e só é consultado quando o documento
+ * principal não existe. Isso evita que um perfil legado bloqueado, com empresa
+ * antiga ou permissões antigas contamine um usuário já corrigido em `usuarios`.
+ */
 export function mergeUserDocuments(uid: string, primary?: RawUserProfile | null, legacy?: RawUserProfile | null): RawUserProfile | null {
-  if (!primary && !legacy) return null;
-  const companyId = getCompanyId(primary) || getCompanyId(legacy);
-  const mergeFlags = (
-    legacyValue?: Record<string, boolean> | string[],
-    primaryValue?: Record<string, boolean> | string[],
-  ): Record<string, boolean> => {
-    const result: Record<string, boolean> = {};
-    const apply = (value?: Record<string, boolean> | string[]) => {
-      if (Array.isArray(value)) value.forEach(key => { if (key) result[key] = true; });
-      else if (value && typeof value === 'object') {
-        Object.entries(value).forEach(([key, enabled]) => { result[key] = enabled === true; });
-      }
-    };
-    apply(legacyValue);
-    apply(primaryValue);
-    return result;
-  };
-  const permissions = mergeFlags(
-    legacy?.permissions || legacy?.permissoes,
-    primary?.permissions || primary?.permissoes,
-  );
-  const modules = mergeFlags(legacy?.modules || legacy?.modulos, primary?.modules || primary?.modulos);
+  const source = primary || legacy;
+  if (!source) return null;
+
+  const companyId = getCompanyId(source);
+  const permissions = normalizeFlags(source.permissions || source.permissoes);
+  const modules = normalizeFlags(source.modules || source.modulos);
+
   return {
-    ...(legacy || {}),
-    ...(primary || {}),
+    ...source,
     uid,
-    nome: primary?.nome || primary?.name || primary?.displayName || legacy?.nome || legacy?.name || legacy?.displayName,
-    email: primary?.email || legacy?.email,
-    role: primary?.role || primary?.tipoUsuario || legacy?.role || legacy?.tipoUsuario,
-    tipoUsuario: primary?.tipoUsuario || legacy?.tipoUsuario,
+    nome: source.nome || source.name || source.displayName,
+    email: source.email,
+    role: source.role || source.tipoUsuario,
+    tipoUsuario: source.tipoUsuario,
     empresaId: companyId,
     companyId,
-    companyName: primary?.companyName || primary?.empresaNome || legacy?.companyName || legacy?.empresaNome,
+    companyName: source.companyName || source.empresaNome,
     permissions,
     modules,
-    ativo: primary?.ativo ?? legacy?.ativo ?? true,
-    status: primary?.status || legacy?.status || 'Ativo',
-    colaboradorId: primary?.colaboradorId || legacy?.colaboradorId,
+    ativo: source.ativo ?? true,
+    status: source.status || 'Ativo',
+    colaboradorId: source.colaboradorId,
   };
 }
 
@@ -109,7 +111,7 @@ export function toUserProfile(uid: string, raw: RawUserProfile, authData: {
   const status = normalizeRole(raw.status);
   // MASTER é uma identidade da plataforma, não um usuário de empresa. O acesso
   // de emergência da plataforma nunca pode ser invalidado por status empresarial.
-  if (!master && (raw.ativo === false || status === 'INATIVO' || status === 'BLOQUEADO')) {
+  if (!master && (raw.ativo === false || ['INATIVO', 'BLOQUEADO', 'SUSPENSO', 'DESATIVADO'].includes(status))) {
     throw new Error('Esta conta foi desativada pelo administrador.');
   }
   return {
