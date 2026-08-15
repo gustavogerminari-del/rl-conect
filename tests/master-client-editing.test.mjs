@@ -37,6 +37,41 @@ test('edição comum não recria administrador nem persiste senha', async () => 
   assert.match(store, /UserService\.create/);
 });
 
+test('criação de empresa só faz rollback quando o administrador falha', async () => {
+  const store = await read('src/master-admin/masterTenantsStore.ts');
+  assert.match(store, /Somente falha no provisionamento real do administrador desfaz a nova empresa/);
+  assert.match(store, /await UserService\.create/);
+  assert.match(store, /await safeAudit\(\{ action: 'CREATE'/);
+  const userCreate = store.indexOf('await UserService.create');
+  const rollbackCatch = store.indexOf('} catch (error) {', userCreate);
+  const auditAfterProvisioning = store.indexOf("await safeAudit({ action: 'CREATE'", rollbackCatch);
+  assert.ok(userCreate >= 0 && rollbackCatch > userCreate && auditAfterProvisioning > rollbackCatch, 'auditoria não pode ficar dentro do rollback do provisionamento');
+});
+
+test('ADMIN_EMPRESA recebe permissões coerentes com módulos liberados', async () => {
+  const permissions = await read('src/services/provisionedPermissions.ts');
+  assert.match(permissions, /ADMIN_BASE_PERMISSIONS/);
+  assert.match(permissions, /recrutamento: \['recrutamento', 'vagas', 'candidatos', 'entrevistas', 'contratacoes'\]/);
+  assert.match(permissions, /departamentoPessoal: \['departamentoPessoal', 'admissao', 'funcionarios', 'documentos'\]/);
+  assert.match(permissions, /if \(enabled !== true\) return/);
+});
+
+test('perfil usuarios é canônico e users é somente fallback', async () => {
+  const profile = await read('src/auth/profile.ts');
+  assert.match(profile, /const source = primary \|\| legacy/);
+  assert.doesNotMatch(profile, /getCompanyId\(primary\) \|\| getCompanyId\(legacy\)/);
+  assert.match(profile, /`usuarios\/\{uid\}` é a fonte oficial/);
+});
+
+test('criação de acesso usa fallback Firebase quando Sites devolve HTML para rota de API inexistente', async () => {
+  const service = await read('src/services/UserService.ts');
+  assert.match(service, /formato inesperado/);
+  assert.match(service, /canUseClientFirebaseFallback/);
+  assert.match(service, /initializeApp\(auth\.app\.options, appName\)/);
+  assert.match(service, /permissoes: input\.permissions/);
+  assert.match(service, /modulos: input\.modules/);
+});
+
 test('Gemini substitui OpenAI e status legado não é reaproveitado', async () => {
   const wrapper = await read('src/master-admin/components/MasterAdminView.tsx');
   const service = await read('src/master-admin/services/masterOperationalService.ts');
