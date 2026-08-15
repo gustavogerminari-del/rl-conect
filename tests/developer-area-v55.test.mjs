@@ -64,6 +64,10 @@ test('Editor Visual salva somente rascunho não aplicado e publicação continua
   assert.match(editor, /developer_visual_drafts/);
   assert.match(editor, /appliedToProduction: false/);
   assert.match(editor, /Edite o layout sem mexer no código/);
+  assert.match(editor, /portal-vagas/);
+  assert.match(editor, /Portal de Vagas \(Público\)/);
+  assert.match(editor, /Cabeçalho do portal/);
+  assert.match(editor, /Cadastrar Currículo/);
   assert.match(editor, /onPointerDown/);
   assert.match(editor, /Camadas/);
   assert.match(editor, /Propriedades/);

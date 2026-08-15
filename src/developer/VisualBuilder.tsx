@@ -49,7 +49,7 @@ type VisualNode = {
   visible: boolean;
 };
 
-type PageKey = 'dashboard' | 'vagas' | 'banco-talentos' | 'acesso-master';
+type PageKey = 'dashboard' | 'vagas' | 'banco-talentos' | 'portal-vagas' | 'acesso-master';
 
 const DEVICES: Record<DeviceKey, { label: string; width: number; height: number; Icon: React.ElementType }> = {
   desktop: { label: 'Desktop', width: 1180, height: 720, Icon: Monitor },
@@ -84,6 +84,22 @@ const BASE_NODES: Record<PageKey, VisualNode[]> = {
     { id: 'candidate-1', kind: 'card', name: 'Candidato 1', text: 'Mariana Souza\nAnalista de RH', x: 56, y: 244, width: 324, height: 170, background: '#ffffff', color: '#0f172a', fontSize: 16, radius: 18, visible: true },
     { id: 'candidate-2', kind: 'card', name: 'Candidato 2', text: 'Lucas Martins\nAnalista de Logística', x: 404, y: 244, width: 324, height: 170, background: '#ffffff', color: '#0f172a', fontSize: 16, radius: 18, visible: true },
     { id: 'candidate-3', kind: 'card', name: 'Candidato 3', text: 'Amanda Ribeiro\nExecutiva Comercial', x: 752, y: 244, width: 350, height: 170, background: '#ffffff', color: '#0f172a', fontSize: 16, radius: 18, visible: true },
+  ],
+  'portal-vagas': [
+    { id: 'portal-header', kind: 'card', name: 'Cabeçalho do portal', text: 'RL CONNECT', x: 0, y: 0, width: 1180, height: 82, background: '#ffffff', color: '#123657', fontSize: 18, radius: 0, visible: true },
+    { id: 'portal-logo', kind: 'text', name: 'Nome / logo', text: 'RL CONNECT', x: 42, y: 18, width: 210, height: 48, background: 'transparent', color: '#123657', fontSize: 22, radius: 0, visible: true },
+    { id: 'portal-menu', kind: 'text', name: 'Menu do portal', text: 'Início   Vagas   Empresas   Soluções   Sobre   Contato', x: 310, y: 24, width: 550, height: 38, background: 'transparent', color: '#334155', fontSize: 13, radius: 0, visible: true },
+    { id: 'portal-login', kind: 'button', name: 'Botão Entrar', text: 'Entrar', x: 1010, y: 18, width: 128, height: 46, background: '#123657', color: '#ffffff', fontSize: 14, radius: 12, visible: true },
+    { id: 'portal-title', kind: 'text', name: 'Título principal', text: 'Conectando talentos às melhores oportunidades', x: 70, y: 126, width: 720, height: 106, background: 'transparent', color: '#123657', fontSize: 42, radius: 0, visible: true },
+    { id: 'portal-subtitle', kind: 'text', name: 'Texto de apresentação', text: 'Encontre vagas, cadastre seu currículo e conecte-se às melhores empresas.', x: 72, y: 238, width: 700, height: 48, background: 'transparent', color: '#64748b', fontSize: 17, radius: 0, visible: true },
+    { id: 'portal-search', kind: 'input', name: 'Busca de vagas', text: 'Cargo, palavra-chave ou cidade...', x: 70, y: 304, width: 770, height: 54, background: '#ffffff', color: '#64748b', fontSize: 14, radius: 14, visible: true },
+    { id: 'portal-search-button', kind: 'button', name: 'Botão Buscar Vagas', text: 'Buscar Vagas', x: 860, y: 304, width: 210, height: 54, background: '#1d4f7a', color: '#ffffff', fontSize: 15, radius: 14, visible: true },
+    { id: 'portal-candidate', kind: 'button', name: 'Cadastrar currículo', text: 'Cadastrar Currículo', x: 70, y: 386, width: 230, height: 50, background: '#1d4f7a', color: '#ffffff', fontSize: 14, radius: 13, visible: true },
+    { id: 'portal-company', kind: 'button', name: 'Área para empresas', text: 'Anunciar Vaga', x: 320, y: 386, width: 210, height: 50, background: '#ffffff', color: '#123657', fontSize: 14, radius: 13, visible: true },
+    { id: 'portal-stat-jobs', kind: 'card', name: 'Indicador Vagas', text: 'Vagas abertas\n0', x: 70, y: 484, width: 230, height: 124, background: '#ffffff', color: '#123657', fontSize: 16, radius: 18, visible: true },
+    { id: 'portal-stat-companies', kind: 'card', name: 'Indicador Empresas', text: 'Empresas verificadas\nConectadas', x: 320, y: 484, width: 230, height: 124, background: '#ffffff', color: '#123657', fontSize: 16, radius: 18, visible: true },
+    { id: 'portal-stat-ai', kind: 'card', name: 'Indicador IA', text: 'RL Connect IA\nMatch inteligente', x: 570, y: 484, width: 230, height: 124, background: '#ffffff', color: '#123657', fontSize: 16, radius: 18, visible: true },
+    { id: 'portal-image', kind: 'image', name: 'Imagem principal', text: 'Imagem do Portal', x: 840, y: 462, width: 270, height: 170, background: '#e2e8f0', color: '#64748b', fontSize: 13, radius: 22, visible: true },
   ],
   'acesso-master': [
     { id: 'title', kind: 'text', name: 'Título principal', text: 'Painel Master RL Connect', x: 56, y: 44, width: 500, height: 52, background: 'transparent', color: '#0f172a', fontSize: 32, radius: 0, visible: true },
@@ -311,6 +327,7 @@ export function VisualBuilder() {
             <option value="dashboard">Dashboard</option>
             <option value="vagas">Vagas</option>
             <option value="banco-talentos">Banco de Talentos</option>
+            <option value="portal-vagas">Portal de Vagas (Público)</option>
             <option value="acesso-master">Painel Master</option>
           </select>
           {(Object.entries(DEVICES) as Array<[DeviceKey, typeof DEVICES[DeviceKey]]>).map(([key, item]) => <button key={key} type="button" title={item.label} onClick={() => switchDevice(key)} className={`${toolButton} ${device === key ? '!border-cyan-500 !bg-cyan-500/10 !text-cyan-300' : ''}`}><item.Icon className="h-4 w-4" /></button>)}
