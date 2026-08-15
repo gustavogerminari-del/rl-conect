@@ -20,8 +20,8 @@ test('company users cannot read, update, block or delete MASTER profiles', async
   const rules = await source('firebase/firestore.rules');
   const service = await source('src/services/UserService.ts');
   const view = await source('src/master-admin/components/MasterAdminOfficialView.tsx');
-  assert.match(rules, /!profileIsMaster\(resource\.data\)/);
-  assert.match(rules, /!profileIsMaster\(request\.resource\.data\)/);
+  assert.match(rules, /!profileIsPlatform\(resource\.data\)/);
+  assert.match(rules, /!profileIsPlatform\(request\.resource\.data\)/);
   assert.match(service, /O acesso MASTER é protegido e não pode ser bloqueado ou desativado/);
   assert.match(service, /O acesso MASTER é protegido e não pode ser excluído/);
   assert.match(view, /Não pode bloquear/);
