@@ -10,11 +10,15 @@ const maxFileBytes = 180_000;
 const maxCatalogBytes = 4_500_000;
 
 async function walk(directory, files = []) {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (excluded.has(entry.name) || entry.name.startsWith('.env')) continue;
-    const absolute = resolve(directory, entry.name);
-    if (entry.isDirectory()) await walk(absolute, files);
-    else if (allowedExtensions.has(extname(entry.name)) || entry.name.endsWith('.rules')) files.push(absolute);
+  try {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (excluded.has(entry.name) || entry.name.startsWith('.env')) continue;
+      const absolute = resolve(directory, entry.name);
+      if (entry.isDirectory()) await walk(absolute, files);
+      else if (allowedExtensions.has(extname(entry.name)) || entry.name.endsWith('.rules')) files.push(absolute);
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
   }
   return files;
 }
@@ -28,7 +32,13 @@ for (const name of ['package.json', 'tsconfig.json', 'vite.config.ts', 'README.m
 let total = 0;
 const catalog = [];
 for (const absolute of [...new Set(files)].sort()) {
-  const content = await readFile(absolute, 'utf8');
+  let content;
+  try {
+    content = await readFile(absolute, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') continue;
+    throw error;
+  }
   const size = Buffer.byteLength(content);
   if (size > maxFileBytes || total + size > maxCatalogBytes) continue;
   total += size;
