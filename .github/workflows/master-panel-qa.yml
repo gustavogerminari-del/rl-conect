@@ -1,0 +1,35 @@
+name: Master Panel QA
+
+on:
+  push:
+    branches:
+      - codex/area-programador-v55
+    paths:
+      - 'src/master-admin/**'
+      - 'src/services/ModuleCatalogService.ts'
+      - 'tests/master-*.test.mjs'
+      - 'scripts/build-verified.sh'
+      - 'scripts/sites-env.sh'
+      - 'scripts/validate-artifact.sh'
+      - 'scripts/generate-source-catalog.mjs'
+      - 'package.json'
+      - '.github/workflows/master-panel-qa.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+      - name: Master regression tests
+        run: node --test --test-force-exit tests/master-panel-official.test.mjs tests/master-access-protection.test.mjs tests/master-client-editing.test.mjs
+      - name: Build
+        run: npm run build
