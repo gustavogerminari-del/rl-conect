@@ -12,7 +12,7 @@ import {
   createUserWithEmailAndPassword,
   deleteUser,
   getAuth,
-  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   updateProfile,
 } from 'firebase/auth';
@@ -119,6 +119,14 @@ async function authorizedRequest(path: string, init: RequestInit): Promise<any> 
   return result;
 }
 
+async function findExistingUserByEmail(email: string): Promise<UserProfile | null> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return null;
+  const snap = await getDocs(query(collection(db, COLLECTION_NAME), where('email', '==', normalizedEmail)));
+  const first = snap.docs[0];
+  return first ? normalizeProfile(first.id, first.data() as RawUserProfile) : null;
+}
+
 async function createUserWithSecondaryFirebaseApp(input: {
   email: string;
   password: string;
@@ -148,25 +156,12 @@ async function createUserWithSecondaryFirebaseApp(input: {
         createError && typeof createError === 'object' && 'code' in createError
           ? String((createError as { code?: unknown }).code || '')
           : '';
-      if (createErrorCode !== 'auth/email-already-in-use') throw createError;
-
-      // Reparação segura: se a conta já existe no Authentication, confirme a
-      // senha fornecida e use o UID real para recriar/vincular os perfis.
-      try {
-        const credential = await signInWithEmailAndPassword(secondaryAuth, input.email, input.password);
-        createdUser = credential.user;
-      } catch (signInError: unknown) {
-        const signInErrorCode =
-          signInError && typeof signInError === 'object' && 'code' in signInError
-            ? String((signInError as { code?: unknown }).code || '')
-            : '';
-        if (signInErrorCode === 'auth/invalid-credential') {
-          throw new Error(
-            'Este e-mail já existe no Firebase Authentication, mas a senha informada não corresponde. Redefina a senha e tente salvar o acesso novamente.'
-          );
-        }
-        throw signInError;
+      if (createErrorCode === 'auth/email-already-in-use') {
+        throw new Error(
+          'Este e-mail já existe no Firebase Authentication. A senha atual do cliente nunca deve ser solicitada. Use “Editar acesso” para alterar empresa, perfil e permissões, ou “Enviar redefinição de senha” para o cliente criar uma nova senha.'
+        );
       }
+      throw createError;
     }
 
     if (!createdUser) throw new Error('O Firebase Authentication não retornou o usuário criado.');
@@ -240,7 +235,7 @@ export class UserService {
     const displayName = userData.displayName?.trim();
     const role = userData.role || 'Colaborador';
     const companyId = userData.companyId?.trim();
-    const isMaster = role.trim().toUpperCase() === 'MASTER';
+    const isMaster = ['MASTER', 'MASTER_ADMIN'].includes(normalizedAccessRole(role));
     const status = userData.status || 'Ativo';
     const provisionedPermissions = buildProvisionedPermissions(
       role,
@@ -252,8 +247,37 @@ export class UserService {
     if (!email || !displayName || (!isMaster && !companyId)) {
       throw new Error('Nome, e-mail e empresa válida são obrigatórios para criar um usuário comum.');
     }
+
+    // Se o perfil já existe no Firestore, isso é uma edição de acesso — não uma
+    // nova conta. Nunca peça a senha atual do cliente para atualizar permissões,
+    // empresa, perfil, nome ou status.
+    const existingUser = await findExistingUserByEmail(email);
+    if (existingUser) {
+      await this.update(existingUser.uid, {
+        displayName,
+        role,
+        companyId: isMaster ? '' : companyId!,
+        status,
+        permissions: provisionedPermissions,
+        modules: userData.modules || existingUser.modules || {},
+        tipoUsuario: userData.tipoUsuario || existingUser.tipoUsuario,
+        colaboradorId: userData.colaboradorId ?? existingUser.colaboradorId,
+      });
+      return (await this.getById(existingUser.uid)) || {
+        ...existingUser,
+        displayName,
+        role,
+        companyId: isMaster ? '' : companyId!,
+        status,
+        permissions: provisionedPermissions,
+        modules: userData.modules || existingUser.modules || {},
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    // Senha temporária é exigida apenas para uma conta realmente nova.
     if (!userData.password || userData.password.length < 6) {
-      throw new Error('Informe uma senha temporária com pelo menos 6 caracteres.');
+      throw new Error('Informe uma senha temporária com pelo menos 6 caracteres para criar um novo acesso.');
     }
 
     const companyName = isMaster ? '' : await resolveCompanyName(companyId!);
@@ -294,8 +318,8 @@ export class UserService {
       }
 
       // Sites publica o cliente sem o servidor Express. Uma segunda instância
-      // do Firebase Auth cria a conta sem derrubar a sessão MASTER; a gravação
-      // do perfil continua protegida pelas regras Firestore e tem rollback.
+      // do Firebase Auth cria uma NOVA conta sem derrubar a sessão MASTER. Ela
+      // nunca é usada para descobrir ou validar a senha de uma conta existente.
       uid = await createUserWithSecondaryFirebaseApp({
         email,
         password: userData.password,
@@ -350,6 +374,13 @@ export class UserService {
     try {
       const current = await this.getById(uid);
       if (!current) throw new Error('Usuário não encontrado.');
+
+      // E-mail é a identidade de login do Firebase. Sem uma rota Admin segura,
+      // alterá-lo só no Firestore quebraria o login. A edição comum não toca nele.
+      if (data.email && data.email.trim().toLowerCase() !== current.email) {
+        throw new Error('A alteração do e-mail de login exige um fluxo administrativo seguro do Firebase. Os demais dados podem ser alterados sem a senha do cliente.');
+      }
+
       const role = String(data.role || current.role || '').trim();
       const normalizedRole = role.toUpperCase().replace(/[\s-]+/g, '_');
       const isMaster = normalizedRole === 'MASTER' || normalizedRole === 'MASTER_ADMIN';
@@ -363,10 +394,14 @@ export class UserService {
       }
       const companyId = String(data.companyId ?? current.companyId ?? '').trim();
       const companyName = isMaster ? '' : await resolveCompanyName(companyId);
+      const safeData = { ...data } as Partial<UserProfile> & Record<string, unknown>;
+      delete safeData.email;
+      delete safeData.password;
+
       try {
         await authorizedRequest(`/api/users/${encodeURIComponent(uid)}`, {
           method: 'PATCH',
-          body: JSON.stringify({ ...data, role, companyId: isMaster ? null : companyId, companyName }),
+          body: JSON.stringify({ ...safeData, role, companyId: isMaster ? null : companyId, companyName }),
         });
       } catch (requestError: any) {
         const statusCode = Number(requestError?.status);
@@ -377,8 +412,10 @@ export class UserService {
         const now = new Date().toISOString();
         const status = String(data.status || current.status || 'Ativo');
         const profilePatch = {
-          ...data,
+          ...safeData,
           role,
+          nome: String(data.displayName ?? current.displayName),
+          displayName: String(data.displayName ?? current.displayName),
           empresaId: isMaster ? null : companyId,
           companyId: isMaster ? null : companyId,
           companyName,
@@ -395,14 +432,32 @@ export class UserService {
 
       await AuditService.log({
         action: 'UPDATE',
-        description: `Perfil do usuário ${uid} atualizado`,
+        description: `Perfil do usuário ${uid} atualizado sem acesso à senha do cliente`,
         moduleName: 'Configurações',
         targetEntity: 'Usuário',
-        companyId: data.companyId
+        companyId: isMaster ? '' : companyId
       });
     } catch (err) {
       console.error('Erro ao atualizar usuário no Firestore:', err);
       throw err;
+    }
+  }
+
+  static async sendPasswordReset(email: string): Promise<void> {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) throw new Error('O usuário não possui e-mail válido para redefinição de senha.');
+
+    try {
+      await sendPasswordResetEmail(auth, normalizedEmail);
+      await AuditService.log({
+        action: 'UPDATE',
+        description: `E-mail de redefinição de senha solicitado para ${normalizedEmail}`,
+        moduleName: 'Configurações',
+        targetEntity: 'Usuário'
+      }).catch(() => undefined);
+    } catch (error) {
+      console.error('Erro ao enviar redefinição de senha:', error);
+      throw new Error('Não foi possível enviar o e-mail de redefinição de senha. Verifique o e-mail do usuário e a configuração do Firebase Authentication.');
     }
   }
 
