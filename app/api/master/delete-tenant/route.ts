@@ -310,6 +310,9 @@ export async function POST(request: Request) {
       .filter(([uid, profiles]) => uid !== caller.uid && !profiles.some(isPlatformIdentity))
       .map(([uid]) => uid);
 
+    // A conta de Authentication é tentada primeiro, mas uma falha nela não pode
+    // manter a empresa/perfis presos no Firestore. Sem perfil de Firestore a conta
+    // órfã não recebe acesso ao RL Connect e pode ser limpa depois pelo Admin SDK.
     const authFailures: string[] = [];
     let deletedAuthUsers = 0;
     for (const uid of linkedUserIds) {
@@ -321,20 +324,15 @@ export async function POST(request: Request) {
       }
     }
 
-    if (authFailures.length) {
-      return Response.json({
-        success: false,
-        error: `Não foi possível excluir ${authFailures.length} conta(s) do Firebase Authentication. A empresa foi preservada para permitir nova tentativa.`,
-        failedUserIds: authFailures,
-      }, { status: 502, headers: JSON_HEADERS });
-    }
-
     const firestoreDeletes: Promise<void>[] = [];
     for (const uid of linkedUserIds) {
       firestoreDeletes.push(deleteFirestoreDocument(serviceAccount.project_id, adminAccessToken, 'usuarios', uid));
       firestoreDeletes.push(deleteFirestoreDocument(serviceAccount.project_id, adminAccessToken, 'users', uid));
     }
     firestoreDeletes.push(deleteFirestoreDocument(serviceAccount.project_id, adminAccessToken, 'empresa_modulos', companyId));
+    firestoreDeletes.push(deleteFirestoreDocument(serviceAccount.project_id, adminAccessToken, 'companyModules', companyId));
+    firestoreDeletes.push(deleteFirestoreDocument(serviceAccount.project_id, adminAccessToken, 'companies', companyId));
+    firestoreDeletes.push(deleteFirestoreDocument(serviceAccount.project_id, adminAccessToken, 'tenants', companyId));
     firestoreDeletes.push(deleteFirestoreDocument(serviceAccount.project_id, adminAccessToken, 'empresas', companyId));
     await Promise.all(firestoreDeletes);
 
@@ -343,6 +341,11 @@ export async function POST(request: Request) {
       companyId,
       deletedAuthUsers,
       removedProfileCount: linkedUserIds.length,
+      authDeletionPending: authFailures.length,
+      failedUserIds: authFailures,
+      warning: authFailures.length
+        ? `${authFailures.length} conta(s) permaneceram no Firebase Authentication, mas os perfis e a empresa foram removidos do Firestore e não possuem mais acesso ao sistema.`
+        : null,
     }, { headers: JSON_HEADERS });
   } catch (error: any) {
     const message = String(error?.message || 'Não foi possível excluir a empresa.');
