@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { Bot, CheckCircle2, Code2, FileCode2, KeyRound, Loader2, Play, Save, Search, ShieldCheck, TriangleAlert, X } from 'lucide-react';
+import { Bot, CheckCircle2, Code2, ExternalLink, FileCode2, KeyRound, Loader2, Play, Save, Search, ShieldCheck, TriangleAlert, X } from 'lucide-react';
 import { auth, db } from '../../lib/firebase';
 
 type SourceFile = { path: string; size: number };
@@ -177,7 +177,7 @@ export const MasterDeveloperAssistantView: React.FC = () => {
         setSelectedProvider('gemini_free');
       }
       setShowKeyModal(false);
-      setNotice({ type: 'success', text: `${keyProvider === 'openai' ? 'OpenAI conectada' : 'Gemini conectado'} com segurança.` });
+      setNotice({ type: 'success', text: `${keyProvider === 'openai' ? 'OpenAI conectada' : 'Google AI Studio / Gemini conectado'} com segurança.` });
     } catch (error: any) {
       setNotice({ type: 'error', text: error?.message || 'Falha ao conectar a IA.' });
     } finally {
@@ -201,10 +201,11 @@ export const MasterDeveloperAssistantView: React.FC = () => {
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-black flex items-center gap-2"><Code2 className="w-5 h-5 text-amber-400" /> Assistente de Desenvolvimento</h2>
-          <p className="text-xs text-slate-400 mt-1">Inspeção e rascunhos técnicos com catálogo seguro do código. Exclusivo do DESENVOLVEDOR.</p>
+          <p className="text-xs text-slate-400 mt-1">Edição de código assistida por Google AI Studio / Gemini para usuários MASTER e DESENVOLVEDOR autenticados pelo Firebase.</p>
         </div>
         <div className="flex items-center gap-2 text-[11px] font-bold flex-wrap">
-          <button onClick={() => openKeyModal('gemini')} className={`px-3 py-2 rounded-xl border flex items-center gap-1 ${geminiConfigured ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-blue-500/10 border-blue-500/20 text-blue-300'}`}><KeyRound className="w-4 h-4" /> {geminiConfigured ? 'Gemini conectado' : 'Conectar Gemini'}</button>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl border border-violet-500/30 bg-violet-500/10 text-violet-200 flex items-center gap-1"><ExternalLink className="w-4 h-4" /> Abrir Google AI Studio</a>
+          <button onClick={() => openKeyModal('gemini')} className={`px-3 py-2 rounded-xl border flex items-center gap-1 ${geminiConfigured ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-blue-500/10 border-blue-500/20 text-blue-300'}`}><KeyRound className="w-4 h-4" /> {geminiConfigured ? 'Google AI Studio conectado' : 'Conectar Gemini / AI Studio'}</button>
           <button onClick={() => openKeyModal('openai')} className={`px-3 py-2 rounded-xl border flex items-center gap-1 ${openAiConfigured ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-blue-500/10 border-blue-500/20 text-blue-300'}`}><KeyRound className="w-4 h-4" /> {openAiConfigured ? 'OpenAI conectada' : 'Conectar OpenAI'}</button>
           <span className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 flex items-center gap-1"><ShieldCheck className="w-4 h-4" /> Chave somente no backend</span>
           <span className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300">Rascunho — não publica sozinho</span>
@@ -241,7 +242,7 @@ export const MasterDeveloperAssistantView: React.FC = () => {
         </aside>
       </div>
 
-      {showKeyModal && <div className="fixed inset-0 z-[80] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"><div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6 space-y-4"><div className="flex items-center justify-between"><div><h3 className="font-black flex items-center gap-2"><KeyRound className="w-5 h-5 text-amber-400" /> Conectar {keyProvider === 'openai' ? 'OpenAI' : 'Gemini'}</h3><p className="text-xs text-slate-400 mt-1">A chave será enviada ao backend e armazenada criptografada.</p></div><button onClick={() => { setShowKeyModal(false); setApiKey(''); }} className="p-2 rounded-lg hover:bg-slate-800"><X className="w-4 h-4" /></button></div><div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-200">{keyProvider === 'openai' ? 'Crie a chave em platform.openai.com.' : 'Crie a chave gratuitamente no Google AI Studio. A mesma chave funciona no modo gratuito ou pago, conforme o faturamento da conta Google.'} Não envie a chave por ChatGPT, e-mail ou WhatsApp.</div><input type="password" autoComplete="off" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={keyProvider === 'openai' ? 'sk-...' : 'AIza...'} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm font-mono outline-none focus:border-amber-500" /><div className="flex justify-end gap-2"><button onClick={() => { setShowKeyModal(false); setApiKey(''); }} className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold">Cancelar</button><button disabled={savingKey || !apiKey.trim()} onClick={() => void configureProvider()} className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-black disabled:opacity-50">{savingKey ? 'Protegendo chave...' : 'Salvar e conectar'}</button></div></div></div>}
+      {showKeyModal && <div className="fixed inset-0 z-[80] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"><div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6 space-y-4"><div className="flex items-center justify-between"><div><h3 className="font-black flex items-center gap-2"><KeyRound className="w-5 h-5 text-amber-400" /> Conectar {keyProvider === 'openai' ? 'OpenAI' : 'Google AI Studio / Gemini'}</h3><p className="text-xs text-slate-400 mt-1">A chave será enviada ao backend e armazenada criptografada.</p></div><button onClick={() => { setShowKeyModal(false); setApiKey(''); }} className="p-2 rounded-lg hover:bg-slate-800"><X className="w-4 h-4" /></button></div><div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-200">{keyProvider === 'openai' ? 'Crie a chave em platform.openai.com.' : 'Crie sua chave no Google AI Studio e cole abaixo. A mesma chave funciona no modo gratuito ou pago, conforme o faturamento da conta Google.'} Não envie a chave por ChatGPT, e-mail ou WhatsApp.</div>{keyProvider === 'gemini' && <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-xs font-black text-violet-200 hover:bg-violet-500/20"><ExternalLink className="h-4 w-4" />Criar/copiar chave no Google AI Studio</a>}<input type="password" autoComplete="off" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={keyProvider === 'openai' ? 'sk-...' : 'AIza...'} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm font-mono outline-none focus:border-amber-500" /><div className="flex justify-end gap-2"><button onClick={() => { setShowKeyModal(false); setApiKey(''); }} className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold">Cancelar</button><button disabled={savingKey || !apiKey.trim()} onClick={() => void configureProvider()} className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-black disabled:opacity-50">{savingKey ? 'Validando no Google...' : 'Validar, salvar e conectar'}</button></div></div></div>}
     </div>
   );
 };

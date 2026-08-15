@@ -59,8 +59,30 @@ test('Firebase continua oficial e não há troca por Google ou Supabase na rota 
 
 test('Editor Visual salva somente rascunho não aplicado e publicação continua humana', async () => {
   const area = await read('src/developer/DeveloperArea.tsx');
-  assert.match(area, /developer_visual_drafts/);
-  assert.match(area, /appliedToProduction: false/);
+  const editor = await read('src/developer/VisualBuilder.tsx');
+  assert.match(area, /return <VisualBuilder/);
+  assert.match(editor, /developer_visual_drafts/);
+  assert.match(editor, /appliedToProduction: false/);
+  assert.match(editor, /Edite o layout sem mexer no código/);
+  assert.match(editor, /onPointerDown/);
+  assert.match(editor, /Camadas/);
+  assert.match(editor, /Propriedades/);
+  assert.match(editor, /Desfazer/);
+  assert.match(editor, /Preview/);
+  assert.match(editor, /Validar/);
+  assert.match(editor, /Testar/);
+  assert.match(editor, /Criar versão/);
   assert.match(area, /merge automático na main estão desabilitados/);
   assert.match(area, /Execução de rollback não está disponível/);
+});
+
+test('Google AI Studio fica acessível ao MASTER sem expor chave no navegador', async () => {
+  const view = await read('src/master-admin/components/MasterDeveloperAssistantView.tsx');
+  const route = await read('app/api/master/developer-assistant/route.ts');
+  assert.match(view, /https:\/\/aistudio\.google\.com\/app\/apikey/);
+  assert.match(view, /MASTER e DESENVOLVEDOR/);
+  assert.match(view, /Conectar Gemini \/ AI Studio/);
+  assert.match(route, /MASTER_ADMIN/);
+  assert.match(route, /validateGeminiApiKey/);
+  assert.doesNotMatch(view, /GEMINI_API_KEY/);
 });

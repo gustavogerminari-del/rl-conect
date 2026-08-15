@@ -16,9 +16,28 @@ const MASTER_SCROLL_CSS = `
     top: var(--master-header-height, 80px);
     height: calc(100dvh - var(--master-header-height, 80px));
     max-height: calc(100dvh - var(--master-header-height, 80px));
-    overflow-y: auto;
+    min-height: 0;
+    box-sizing: border-box;
+    overflow-y: auto !important;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: #64748b #0f172a;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .master-admin-wrapper aside::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .master-admin-wrapper aside::-webkit-scrollbar-track {
+    background: #0f172a;
+  }
+
+  .master-admin-wrapper aside::-webkit-scrollbar-thumb {
+    border: 2px solid #0f172a;
+    border-radius: 999px;
+    background: #64748b;
   }
 
   .master-admin-wrapper main {
@@ -44,6 +63,26 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
   const [officialSection] = useState<MasterNavigationSection>(props.initialSection ?? 'dashboard');
   const [menuHost, setMenuHost] = useState<HTMLElement | null>(null);
 
+  useEffect(() => {
+    const root = rootRef.current;
+    const header = root?.querySelector('header');
+    if (!root || !(header instanceof HTMLElement)) return;
+
+    const syncHeaderHeight = () => {
+      root.style.setProperty('--master-header-height', `${Math.ceil(header.getBoundingClientRect().height)}px`);
+    };
+
+    syncHeaderHeight();
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncHeaderHeight) : null;
+    resizeObserver?.observe(header);
+    window.addEventListener('resize', syncHeaderHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', syncHeaderHeight);
+    };
+  }, [officialSection]);
+
   const openDeveloperArea = useCallback(async () => {
     const validation = await validarAcessoMaster();
     if (!validation.autorizado) {
@@ -64,8 +103,6 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
     const root = rootRef.current;
     if (!root) return;
 
-    let headerObserver: ResizeObserver | null = null;
-
     const normalizeVisibleLabels = () => {
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       let node = walker.nextNode();
@@ -82,25 +119,12 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
       const host = root.querySelector('aside > div');
       setMenuHost(host instanceof HTMLElement ? host : null);
 
-      const header = root.querySelector('header');
-      if (header instanceof HTMLElement) {
-        const updateHeaderHeight = () => {
-          root.style.setProperty('--master-header-height', `${header.getBoundingClientRect().height}px`);
-        };
-        updateHeaderHeight();
-        headerObserver?.disconnect();
-        headerObserver = new ResizeObserver(updateHeaderHeight);
-        headerObserver.observe(header);
-      }
     };
 
     normalizeVisibleLabels();
     const observer = new MutationObserver(normalizeVisibleLabels);
     observer.observe(root, { childList: true, subtree: true, characterData: true });
-    return () => {
-      observer.disconnect();
-      headerObserver?.disconnect();
-    };
+    return () => observer.disconnect();
   }, [officialSection]);
 
   return (
