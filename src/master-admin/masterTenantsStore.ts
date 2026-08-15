@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDocs, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { sanitizeFirestoreData } from '../lib/firestoreUtils';
 import { AuditService } from '../services/AuditService';
@@ -16,6 +16,16 @@ const isPlatformIdentity = (role: unknown, tipoUsuario: unknown) => {
   const values = [normalizeRole(role), normalizeRole(tipoUsuario)];
   return values.some((value) => ['MASTER', 'MASTER_ADMIN', 'DEVELOPER', 'DEVELOPER_ADMIN', 'DESENVOLVEDOR'].includes(value));
 };
+
+async function safeAudit(input: Parameters<typeof AuditService.log>[0], context: string): Promise<void> {
+  try {
+    await AuditService.log(input);
+  } catch (error) {
+    // Auditoria é importante, mas nunca pode transformar uma operação já concluída
+    // em falso erro de permissão nem desfazer empresa/usuário criado com sucesso.
+    console.warn(`[Painel Master] ${context} concluído, mas a auditoria não pôde ser registrada.`, error);
+  }
+}
 
 export function normalizeTenantRecord(id: string, raw: Record<string, any>): ClientTenant {
   const source = raw.rawTenantData && typeof raw.rawTenantData === 'object' ? raw.rawTenantData : raw;
@@ -38,9 +48,13 @@ export function normalizeTenantRecord(id: string, raw: Record<string, any>): Cli
 export async function syncTenantsFromFirestore(): Promise<ClientTenant[]> { const snapshot = await getDocs(collection(db, 'empresas')); return snapshot.docs.map((item) => normalizeTenantRecord(item.id, item.data() as Record<string, any>)); }
 
 async function persistTenant(tenant: ClientTenant): Promise<void> {
+  // Empresa e mapa de módulos precisam nascer juntos. O batch evita empresa pela
+  // metade quando uma das duas gravações for recusada pelo Firestore.
+  const batch = writeBatch(db);
   const payload = sanitizeFirestoreData({ ...tenant, empresaId: tenant.id, companyId: tenant.id, nomeEmpresa: tenant.companyName, modulos: tenant.modules, rawTenantData: tenant, updatedAt: nowIso(), updatedBy: auth.currentUser?.uid || 'MASTER' });
-  await setDoc(doc(db, 'empresas', tenant.id), payload, { merge: true });
-  await setDoc(doc(db, 'empresa_modulos', tenant.id), sanitizeFirestoreData({ empresaId: tenant.id, companyId: tenant.id, modules: tenant.modules, modulos: tenant.modules, updatedAt: nowIso(), updatedBy: auth.currentUser?.uid || 'MASTER' }), { merge: true });
+  batch.set(doc(db, 'empresas', tenant.id), payload, { merge: true });
+  batch.set(doc(db, 'empresa_modulos', tenant.id), sanitizeFirestoreData({ empresaId: tenant.id, companyId: tenant.id, modules: tenant.modules, modulos: tenant.modules, updatedAt: nowIso(), updatedBy: auth.currentUser?.uid || 'MASTER' }), { merge: true });
+  await batch.commit();
 }
 
 export async function saveTenantAsync(input: TenantSaveInput): Promise<ClientTenant[]> {
@@ -68,22 +82,46 @@ export async function saveTenantAsync(input: TenantSaveInput): Promise<ClientTen
   // Edição comum nunca provisiona usuário e nunca altera senha no Authentication.
   if (!isCreate) {
     await persistTenant(tenant);
-    await AuditService.log({ action: 'UPDATE', description: `Empresa ${tenant.companyName} atualizada sem alteração de credenciais`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: tenant.id });
+    await safeAudit({ action: 'UPDATE', description: `Empresa ${tenant.companyName} atualizada sem alteração de credenciais`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: tenant.id }, 'Atualização da empresa');
     return syncTenantsFromFirestore();
   }
 
   await persistTenant(tenant);
+
+  // Somente falha no provisionamento real do administrador desfaz a nova empresa.
+  // Antes, uma simples falha no audit log caía neste catch, apagava a empresa e
+  // deixava a conta recém-criada órfã no Firebase.
   try {
-    await UserService.create({ email: tenant.adminCredentials!.adminEmail, password, displayName: tenant.ownerName || tenant.companyName, role: 'ADMIN_EMPRESA', tipoUsuario: 'ADMIN_EMPRESA', companyId: tenant.id, status: 'Ativo', modules: modulesForUser(tenant.modules) });
-    await AuditService.log({ action: 'CREATE', description: `Empresa ${tenant.companyName} e administrador inicial criados`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: tenant.id });
+    await UserService.create({
+      email: tenant.adminCredentials!.adminEmail,
+      password,
+      displayName: tenant.ownerName || tenant.companyName,
+      role: 'ADMIN_EMPRESA',
+      tipoUsuario: 'ADMIN_EMPRESA',
+      companyId: tenant.id,
+      status: 'Ativo',
+      modules: modulesForUser(tenant.modules),
+    });
   } catch (error) {
-    await Promise.allSettled([deleteDoc(doc(db, 'empresa_modulos', tenant.id)), deleteDoc(doc(db, 'empresas', tenant.id))]);
+    await Promise.allSettled([
+      deleteDoc(doc(db, 'empresa_modulos', tenant.id)),
+      deleteDoc(doc(db, 'empresas', tenant.id)),
+    ]);
     throw error;
   }
+
+  await safeAudit({ action: 'CREATE', description: `Empresa ${tenant.companyName} e administrador inicial criados`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: tenant.id }, 'Criação da empresa');
   return syncTenantsFromFirestore();
 }
 
-export async function toggleTenantStatus(id: string, currentStatus: TenantStatus): Promise<ClientTenant[]> { const nextStatus: TenantStatus = currentStatus === 'Ativo' ? 'Suspenso' : 'Ativo'; await setDoc(doc(db, 'empresas', id), sanitizeFirestoreData({ status: nextStatus, updatedAt: nowIso(), updatedBy: auth.currentUser?.uid || 'MASTER' }), { merge: true }); await AuditService.log({ action: 'UPDATE', description: `Empresa ${id} alterada para ${nextStatus}`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: id }); return syncTenantsFromFirestore(); }
+export async function toggleTenantStatus(id: string, currentStatus: TenantStatus): Promise<ClientTenant[]> {
+  const nextStatus: TenantStatus = currentStatus === 'Ativo' ? 'Suspenso' : 'Ativo';
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'empresas', id), sanitizeFirestoreData({ status: nextStatus, updatedAt: nowIso(), updatedBy: auth.currentUser?.uid || 'MASTER' }), { merge: true });
+  await batch.commit();
+  await safeAudit({ action: 'UPDATE', description: `Empresa ${id} alterada para ${nextStatus}`, moduleName: 'Painel Master', targetEntity: 'Empresa', companyId: id }, 'Alteração de status da empresa');
+  return syncTenantsFromFirestore();
+}
 
 type ServerDeleteResult = {
   deletedAuthUsers: number;
@@ -167,19 +205,15 @@ export async function deleteTenant(id: string): Promise<ClientTenant[]> {
     usedFirestoreFallback = true;
   }
 
-  try {
-    await AuditService.log({
-      action: 'DELETE',
-      description: usedFirestoreFallback
-        ? `Empresa ${id} removida do Firestore por fallback; ${removedProfileCount} perfil(is) removido(s) e ${authDeletionPending} conta(s) aguardando limpeza no Authentication`
-        : `Empresa ${id} removida do cadastro Master, ${deletedAuthUsers} conta(s) excluída(s) do Firebase Authentication, ${removedProfileCount} perfil(is) removido(s) e ${authDeletionPending} conta(s) pendente(s) no Authentication`,
-      moduleName: 'Painel Master',
-      targetEntity: 'Empresa',
-      companyId: id,
-    });
-  } catch (auditError) {
-    console.warn('Empresa excluída, mas o log de auditoria não pôde ser salvo:', auditError);
-  }
+  await safeAudit({
+    action: 'DELETE',
+    description: usedFirestoreFallback
+      ? `Empresa ${id} removida do Firestore por fallback; ${removedProfileCount} perfil(is) removido(s) e ${authDeletionPending} conta(s) aguardando limpeza no Authentication`
+      : `Empresa ${id} removida do cadastro Master, ${deletedAuthUsers} conta(s) excluída(s) do Firebase Authentication, ${removedProfileCount} perfil(is) removido(s) e ${authDeletionPending} conta(s) pendente(s) no Authentication`,
+    moduleName: 'Painel Master',
+    targetEntity: 'Empresa',
+    companyId: id,
+  }, 'Exclusão da empresa');
 
   return syncTenantsFromFirestore();
 }
