@@ -12,6 +12,7 @@ on:
       - 'scripts/sites-env.sh'
       - 'scripts/validate-artifact.sh'
       - 'scripts/generate-source-catalog.mjs'
+      - 'package.json'
       - '.github/workflows/master-panel-qa.yml'
   workflow_dispatch:
 
