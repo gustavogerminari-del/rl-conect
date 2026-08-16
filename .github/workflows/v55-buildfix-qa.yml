@@ -1,0 +1,57 @@
+name: V55 Buildfix QA
+
+on:
+  push:
+    branches:
+      - codex/area-programador-v55-buildfix
+      - codex/area-programador-v55
+    paths-ignore:
+      - '*.zip'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Validate developer route
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "'/master/programador'" src/App.tsx
+          grep -Fq "developer_area" src/components/Sidebar.tsx
+          grep -Fq "VisualBuilder" src/developer/DeveloperArea.tsx
+          grep -Fq "portal-vagas" src/developer/VisualBuilder.tsx
+          grep -Fq "MasterDeveloperAssistantView" src/developer/DeveloperArea.tsx
+          grep -Fq "Google AI Studio" src/developer/DeveloperArea.tsx
+
+      - name: Build
+        run: npm run build
+
+      - name: Create source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --output=rl-connect-v55-atualizado.zip HEAD
+          test -s rl-connect-v55-atualizado.zip
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: rl-connect-v55-atualizado
+          path: rl-connect-v55-atualizado.zip
+          if-no-files-found: error
+          retention-days: 30
