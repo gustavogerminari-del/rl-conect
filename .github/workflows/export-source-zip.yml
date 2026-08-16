@@ -1,0 +1,29 @@
+name: Export RL Connect Source ZIP
+
+on:
+  push:
+    branches:
+      - codex/export-v55-zip-20260815
+  workflow_dispatch:
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout export branch
+        uses: actions/checkout@v4
+
+      - name: Create source ZIP
+        run: |
+          mkdir -p export
+          zip -r export/RL-Connect-v55-GitHub-2026-08-15.zip . \
+            -x '.git/*' 'node_modules/*' 'export/*' '.next/*' '.vinext/*' 'dist/*'
+
+      - name: Upload source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: RL-Connect-v55-GitHub-2026-08-15
+          path: export/RL-Connect-v55-GitHub-2026-08-15.zip
+          if-no-files-found: error
+          retention-days: 1
