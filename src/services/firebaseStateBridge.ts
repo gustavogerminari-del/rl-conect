@@ -32,6 +32,10 @@ type Key = keyof typeof COLLECTION_MAP;
 export type TenantState = Partial<Record<Key, any[]>>;
 const aliases = ['empresa_id', 'empresaId', 'companyId', 'tenantId'] as const;
 
+// Estas coleções pertencem ao controle comercial/MASTER e nunca devem ser
+// regravadas automaticamente quando um usuário da empresa altera vaga, DP etc.
+const MASTER_MANAGED_KEYS = new Set<Key>(['empresaModulos', 'assinaturas', 'pagamentos', 'aiSettings']);
+
 async function tenantDocs(name: string, companyId: string): Promise<Map<string, any>> {
   const found = new Map<string, any>();
   for (const field of aliases) {
@@ -67,19 +71,31 @@ class FirebaseStateBridge {
 
   async persistTenantState(companyId: string, state: TenantState): Promise<void> {
     if (!companyId) return;
-    // Upsert only. Never delete a Firestore document merely because this browser
-    // did not load it, avoiding data loss in concurrent multi-user sessions.
+
+    const failures: string[] = [];
     for (const key of Object.keys(COLLECTION_MAP) as Key[]) {
+      if (MASTER_MANAGED_KEYS.has(key)) continue;
+
       const collectionName = COLLECTION_MAP[key];
       const raw = Array.isArray(state[key]) ? state[key]! : [];
       const items = raw.filter((item: any) => key === 'empresas' ? item.id === companyId : tenantIdFrom(item) === companyId);
+
       for (const item of items) {
         if (!item?.id) continue;
         const payload = key === 'empresas'
           ? { ...item, empresa_id: companyId, empresaId: companyId, companyId }
           : withTenantAliases(item, companyId);
-        await setDoc(doc(db, collectionName, String(item.id)), payload, { merge: true });
+        try {
+          await setDoc(doc(db, collectionName, String(item.id)), payload, { merge: true });
+        } catch (error) {
+          failures.push(`${collectionName}/${item.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
+    }
+
+    if (failures.length) {
+      console.error('[Firestore] Algumas gravações do tenant falharam:', failures);
+      throw new Error(`Falha ao salvar ${failures.length} registro(s) no Firebase. ${failures[0]}`);
     }
   }
 
@@ -95,7 +111,9 @@ class FirebaseStateBridge {
           const status = String(data.status || '').toLowerCase();
           if (published && !['encerrada', 'fechada', 'cancelada'].includes(status)) jobs.set(d.id, { id: d.id, ...data });
         });
-      } catch {}
+      } catch (error) {
+        console.debug(`[Firestore] public portal query skipped vagas.${field}`, error);
+      }
     }
     return { empresa: company[0] || null, vagas: [...jobs.values()] };
   }
