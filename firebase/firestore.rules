@@ -7,7 +7,6 @@ service cloud.firestore {
     function hasLegacy() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
     function primary() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data; }
     function legacy() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-
     function profileActive(data) {
       return (!('ativo' in data) || data.ativo != false)
         && (!('status' in data) || (
@@ -17,85 +16,310 @@ service cloud.firestore {
           && data.status != 'Desativado' && data.status != 'DESATIVADO'
         ));
     }
-
-    // usuarios/{uid} é a fonte canônica. users/{uid} é apenas fallback legado.
     function active() {
       return signedIn() && (
         (hasPrimary() && profileActive(primary())) ||
         (!hasPrimary() && hasLegacy() && profileActive(legacy()))
       );
     }
-
     function masterRole(value) {
-      return value in ['master_admin','MASTER_ADMIN','MASTER','SUPER_ADMINISTRADOR','Super Administrador'];
+      return value in ['master_admin', 'MASTER_ADMIN', 'MASTER', 'SUPER_ADMINISTRADOR', 'Super Administrador'];
+    }
+    function profileIsMaster(data) {
+      return data != null && (masterRole(data.role) || masterRole(data.tipoUsuario));
     }
     function developerRole(value) {
-      return value in ['developer_admin','DEVELOPER_ADMIN','DEVELOPER','DESENVOLVEDOR'];
+      return value in ['developer_admin', 'DEVELOPER_ADMIN', 'DEVELOPER', 'DESENVOLVEDOR'];
     }
-    function operatorRole(value) {
-      return value in [
-        'ADMIN_EMPRESA','ADMIN','ADMINISTRADOR','Administrador','ADMINISTRADOR_EMPRESA','Administrador da Empresa',
-        'EMPRESA_ADMIN','GESTOR_EMPRESA','GESTOR','EMPRESA','RH','DP','HEADHUNTER','RECRUTADOR','FINANCEIRO',
-        'RECRUTAMENTO','Recrutamento','RECRUTAMENTO_HEADHUNTER','RECRUTAMENTO / HEADHUNTER','RECRUTAMENTO/HEADHUNTER',
-        'Recrutamento / Headhunter','RECRUTADOR_SÊNIOR','Recrutador Sênior','RECRUTADOR SENIOR','ANALISTA_DE_RH',
-        'Analista de RH','ANALISTA RH','GESTOR_DE_SELEÇÃO','Gestor de Seleção','GESTOR DE SELECAO'
-      ];
+    function profileIsDeveloper(data) {
+      return data != null && (developerRole(data.role) || developerRole(data.tipoUsuario));
     }
-    function companyAdminRole(value) {
-      return value in ['ADMIN_EMPRESA','ADMIN','ADMINISTRADOR','Administrador','ADMINISTRADOR_EMPRESA','Administrador da Empresa','EMPRESA_ADMIN','GESTOR_EMPRESA'];
+    function profileIsPlatform(data) {
+      return profileIsMaster(data) || profileIsDeveloper(data);
     }
-
-    function fieldRole(data) { return ('role' in data) ? data.role : ''; }
-    function fieldTipoUsuario(data) { return ('tipoUsuario' in data) ? data.tipoUsuario : ''; }
-    function profileIsMaster(data) { return masterRole(fieldRole(data)) || masterRole(fieldTipoUsuario(data)); }
-    function profileIsDeveloper(data) { return developerRole(fieldRole(data)) || developerRole(fieldTipoUsuario(data)); }
-    function profileIsPlatform(data) { return profileIsMaster(data) || profileIsDeveloper(data); }
-
     function master() {
       return signedIn() && (
-        (hasPrimary() && profileIsMaster(primary())) ||
-        (!hasPrimary() && hasLegacy() && profileIsMaster(legacy()))
+        (hasPrimary() && (masterRole(primary().role) || masterRole(primary().tipoUsuario))) ||
+        (!hasPrimary() && hasLegacy() && (masterRole(legacy().role) || masterRole(legacy().tipoUsuario)))
       );
     }
     function developer() {
       return active() && (
-        (hasPrimary() && profileIsDeveloper(primary())) ||
-        (!hasPrimary() && hasLegacy() && profileIsDeveloper(legacy()))
+        (hasPrimary() && (developerRole(primary().role) || developerRole(primary().tipoUsuario))) ||
+        (!hasPrimary() && hasLegacy() && (developerRole(legacy().role) || developerRole(legacy().tipoUsuario)))
       );
     }
-    function technicalPlatformAccess() { return master() || developer(); }
-    function tenantOperator() {
+    function technicalPlatformAccess() {
+      return master() || developer();
+    }
+    function companyManagerRole(value) {
+      return value in [
+        'ADMIN_EMPRESA', 'ADMIN', 'ADMINISTRADOR', 'Administrador',
+        'ADMINISTRADOR_EMPRESA', 'Administrador da Empresa',
+        'EMPRESA_ADMIN', 'GESTOR_EMPRESA', 'EMPRESA',
+        'RH', 'DP', 'GESTOR', 'HEADHUNTER', 'RECRUTADOR', 'FINANCEIRO',
+        'RECRUTAMENTO', 'Recrutamento',
+        'RECRUTAMENTO_HEADHUNTER', 'RECRUTAMENTO / HEADHUNTER',
+        'RECRUTAMENTO/HEADHUNTER', 'Recrutamento / Headhunter',
+        'RECRUTADOR_SÊNIOR', 'Recrutador Sênior', 'RECRUTADOR SENIOR',
+        'ANALISTA_DE_RH', 'Analista de RH', 'ANALISTA RH',
+        'GESTOR_DE_SELEÇÃO', 'Gestor de Seleção', 'GESTOR DE SELECAO'
+      ];
+    }
+    function companyManager() {
       return active() && (
-        (hasPrimary() && (operatorRole(fieldRole(primary())) || operatorRole(fieldTipoUsuario(primary())))) ||
-        (!hasPrimary() && hasLegacy() && (operatorRole(fieldRole(legacy())) || operatorRole(fieldTipoUsuario(legacy()))))
+        (hasPrimary() && (companyManagerRole(primary().role) || companyManagerRole(primary().tipoUsuario))) ||
+        (!hasPrimary() && hasLegacy() && (companyManagerRole(legacy().role) || companyManagerRole(legacy().tipoUsuario)))
       );
+    }
+    function companyAdminRole(value) {
+      return value in [
+        'ADMIN_EMPRESA', 'ADMIN', 'ADMINISTRADOR', 'Administrador',
+        'ADMINISTRADOR_EMPRESA', 'Administrador da Empresa',
+        'EMPRESA_ADMIN', 'GESTOR_EMPRESA'
+      ];
     }
     function companyAdmin() {
       return active() && (
-        (hasPrimary() && (companyAdminRole(fieldRole(primary())) || companyAdminRole(fieldTipoUsuario(primary())))) ||
-        (!hasPrimary() && hasLegacy() && (companyAdminRole(fieldRole(legacy())) || companyAdminRole(fieldTipoUsuario(legacy()))))
+        (hasPrimary() && (companyAdminRole(primary().role) || companyAdminRole(primary().tipoUsuario))) ||
+        (!hasPrimary() && hasLegacy() && (companyAdminRole(legacy().role) || companyAdminRole(legacy().tipoUsuario)))
       );
     }
-
-    function dataTenant(data) {
-      return ('empresa_id' in data && data.empresa_id is string && data.empresa_id != '') ? data.empresa_id
-        : ('empresaId' in data && data.empresaId is string && data.empresaId != '') ? data.empresaId
-        : ('companyId' in data && data.companyId is string && data.companyId != '') ? data.companyId
-        : ('tenantId' in data && data.tenantId is string && data.tenantId != '') ? data.tenantId
-        : '';
+    function headhunterRole(value) {
+      return value in [
+        'HEADHUNTER', 'Headhunter', 'RECRUTADOR', 'Recrutador',
+        'RECRUTAMENTO', 'Recrutamento',
+        'RECRUTAMENTO_HEADHUNTER', 'RECRUTAMENTO / HEADHUNTER',
+        'RECRUTAMENTO/HEADHUNTER', 'Recrutamento / Headhunter',
+        'RECRUTADOR_SÊNIOR', 'Recrutador Sênior', 'RECRUTADOR SENIOR',
+        'ANALISTA_DE_RH', 'Analista de RH', 'ANALISTA RH',
+        'GESTOR_DE_SELEÇÃO', 'Gestor de Seleção', 'GESTOR DE SELECAO'
+      ];
+    }
+    function profilePermission(data, permission) {
+      return ('permissions' in data && data.permissions is list && permission in data.permissions)
+        || ('permissions' in data && data.permissions is map && permission in data.permissions && data.permissions[permission] == true)
+        || ('permissoes' in data && data.permissoes is list && permission in data.permissoes)
+        || ('permissoes' in data && data.permissoes is map && permission in data.permissoes && data.permissoes[permission] == true);
+    }
+    function profilePermissionConfigured(data, permission) {
+      return ('permissions' in data && data.permissions is list && permission in data.permissions)
+        || ('permissions' in data && data.permissions is map && permission in data.permissions)
+        || ('permissoes' in data && data.permissoes is list && permission in data.permissoes)
+        || ('permissoes' in data && data.permissoes is map && permission in data.permissoes);
+    }
+    function permissionConfigured(permission) {
+      return active() && (
+        (hasPrimary() && profilePermissionConfigured(primary(), permission)) ||
+        (!hasPrimary() && hasLegacy() && profilePermissionConfigured(legacy(), permission))
+      );
+    }
+    function hasPermission(permission) {
+      return active() && (
+        hasPrimary() && profilePermissionConfigured(primary(), permission)
+          ? profilePermission(primary(), permission)
+          : !hasPrimary() && hasLegacy() && profilePermissionConfigured(legacy(), permission)
+            ? profilePermission(legacy(), permission)
+            : false
+      );
+    }
+    function hasHeadhunterRole() {
+      return active() && (
+        (hasPrimary() && (headhunterRole(primary().role) || headhunterRole(primary().tipoUsuario))) ||
+        (!hasPrimary() && hasLegacy() && (headhunterRole(legacy().role) || headhunterRole(legacy().tipoUsuario)))
+      );
+    }
+    function profileModuleEnabled(data, moduleKey) {
+      return ('modules' in data && data.modules is map && moduleKey in data.modules && data.modules[moduleKey] == true)
+        || ('modulos' in data && data.modulos is map && moduleKey in data.modulos && data.modulos[moduleKey] == true)
+        || profilePermission(data, moduleKey);
+    }
+    function profileHeadhunterFinanceEnabled(data) {
+      return profileModuleEnabled(data, 'financeiroHeadhunter')
+        || profileModuleEnabled(data, 'financeiro_headhunter')
+        || profileModuleEnabled(data, 'financeiroheadhunter')
+        || profileModuleEnabled(data, 'headhunter-financeiro')
+        || profileModuleEnabled(data, 'headhunter_financeiro')
+        || profileModuleEnabled(data, 'enviar_cobranca');
+    }
+    function hasAssignedHeadhunterAccess() {
+      return active() && (
+        (hasPrimary() && (profileModuleEnabled(primary(), 'headhunter') || profileHeadhunterFinanceEnabled(primary()))) ||
+        (!hasPrimary() && hasLegacy() && (profileModuleEnabled(legacy(), 'headhunter') || profileHeadhunterFinanceEnabled(legacy()))) ||
+        hasHeadhunterRole()
+      );
     }
     function tenantId() {
-      return hasPrimary() ? dataTenant(primary())
-        : hasLegacy() ? dataTenant(legacy())
+      return hasPrimary() && 'empresa_id' in primary() && primary().empresa_id is string && primary().empresa_id != '' ? primary().empresa_id
+        : hasPrimary() && 'empresaId' in primary() && primary().empresaId is string && primary().empresaId != '' ? primary().empresaId
+        : hasPrimary() && 'companyId' in primary() && primary().companyId is string && primary().companyId != '' ? primary().companyId
+        : hasPrimary() && 'tenantId' in primary() && primary().tenantId is string && primary().tenantId != '' ? primary().tenantId
+        : !hasPrimary() && hasLegacy() && 'empresa_id' in legacy() && legacy().empresa_id is string && legacy().empresa_id != '' ? legacy().empresa_id
+        : !hasPrimary() && hasLegacy() && 'empresaId' in legacy() && legacy().empresaId is string && legacy().empresaId != '' ? legacy().empresaId
+        : !hasPrimary() && hasLegacy() && 'companyId' in legacy() && legacy().companyId is string && legacy().companyId != '' ? legacy().companyId
+        : !hasPrimary() && hasLegacy() && 'tenantId' in legacy() && legacy().tenantId is string && legacy().tenantId != '' ? legacy().tenantId
+        : '';
+    }
+    function dataTenant(data) {
+      return 'empresa_id' in data && data.empresa_id is string && data.empresa_id != '' ? data.empresa_id
+        : 'empresaId' in data && data.empresaId is string && data.empresaId != '' ? data.empresaId
+        : 'companyId' in data && data.companyId is string && data.companyId != '' ? data.companyId
+        : 'tenantId' in data && data.tenantId is string && data.tenantId != '' ? data.tenantId
         : '';
     }
     function sameTenant(data) { return active() && tenantId() != '' && dataTenant(data) == tenantId(); }
-    function tenantWrite(data) { return tenantOperator() && tenantId() != '' && dataTenant(data) == tenantId(); }
-    function tenantUpdate(oldData, newData) {
-      return tenantOperator() && tenantId() != '' && dataTenant(newData) == tenantId()
-        && (dataTenant(oldData) == tenantId() || dataTenant(oldData) == '');
+    function tenantIsTrial(companyId) {
+      let companyPath = /databases/$(database)/documents/empresas/$(companyId);
+      return exists(companyPath) && (
+        get(companyPath).data.status == 'Em Teste (Trial)' ||
+        get(companyPath).data.status == 'Trial' ||
+        get(companyPath).data.plano == 'trial'
+      );
     }
-
+    function tenantModuleEnabled(companyId, moduleKey) {
+      let modulePath = /databases/$(database)/documents/empresa_modulos/$(companyId);
+      let companyPath = /databases/$(database)/documents/empresas/$(companyId);
+      return (exists(modulePath) && (
+          ('modulos' in get(modulePath).data && get(modulePath).data.modulos is map && get(modulePath).data.modulos[moduleKey] == true)
+          || ('modules' in get(modulePath).data && get(modulePath).data.modules is map && get(modulePath).data.modules[moduleKey] == true)
+          || (moduleKey in get(modulePath).data && get(modulePath).data[moduleKey] == true)
+        ))
+        || (exists(companyPath) && (
+          ('modulos' in get(companyPath).data && get(companyPath).data.modulos is map && get(companyPath).data.modulos[moduleKey] == true)
+          || ('modules' in get(companyPath).data && get(companyPath).data.modules is map && get(companyPath).data.modules[moduleKey] == true)
+          || ('rawTenantData' in get(companyPath).data
+            && get(companyPath).data.rawTenantData is map
+            && 'modules' in get(companyPath).data.rawTenantData
+            && get(companyPath).data.rawTenantData.modules is map
+            && get(companyPath).data.rawTenantData.modules[moduleKey] == true)
+        ));
+    }
+    function hasHeadhunterModuleAccess() {
+      return tenantId() != '' && (
+        tenantModuleEnabled(tenantId(), 'headhunter') ||
+        tenantModuleEnabled(tenantId(), 'financeiroHeadhunter') ||
+        tenantModuleEnabled(tenantId(), 'financeiro_headhunter') ||
+        tenantModuleEnabled(tenantId(), 'financeiroheadhunter') ||
+        tenantModuleEnabled(tenantId(), 'headhunter-financeiro') ||
+        tenantModuleEnabled(tenantId(), 'headhunter_financeiro') ||
+        tenantModuleEnabled(tenantId(), 'enviar_cobranca')
+      ) && hasAssignedHeadhunterAccess();
+    }
+    function canViewHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.visualizar')
+        || hasPermission('headhunter.financeiro.editar')
+        || hasPermission('headhunter.financeiro.encaminhar')
+        || hasPermission('headhunter.financeiro.cobrar')
+        || (!permissionConfigured('headhunter.financeiro.visualizar') && hasHeadhunterModuleAccess());
+    }
+    function canEditHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.editar')
+        || hasPermission('headhunter.financeiro.encaminhar')
+        || hasPermission('headhunter.financeiro.cobrar')
+        || (!permissionConfigured('headhunter.financeiro.editar') && hasHeadhunterModuleAccess());
+    }
+    function canForwardHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.encaminhar')
+        || (!permissionConfigured('headhunter.financeiro.encaminhar') && hasHeadhunterModuleAccess());
+    }
+    function canChargeHeadhunterFinance() {
+      return master() || companyAdmin()
+        || hasPermission('headhunter.financeiro.cobrar')
+        || (!permissionConfigured('headhunter.financeiro.cobrar') && hasAssignedHeadhunterAccess());
+    }
+    function talentBankEnabled(companyId) {
+      return companyId != '' && !tenantIsTrial(companyId) && tenantModuleEnabled(companyId, 'bancoTalentos');
+    }
+    function tenantCreate(data) { return dataTenant(data) != '' && (master() || sameTenant(data)); }
+    function publicJob(data) {
+      return ((('publicada' in data) && data.publicada == true) || (('publicado' in data) && data.publicado == true))
+        && dataTenant(data) != ''
+        && (!('status' in data) || !(
+          data.status in ['Encerrada','encerrada','ENCERRADA','Fechada','fechada','FECHADA','Cancelada','cancelada','CANCELADA']
+        ));
+    }
+    function publicJobOwner(jobId, companyId) {
+      return jobId is string && jobId != '' && companyId is string && companyId != ''
+        && exists(/databases/$(database)/documents/vagas/$(jobId))
+        && publicJob(get(/databases/$(database)/documents/vagas/$(jobId)).data)
+        && dataTenant(get(/databases/$(database)/documents/vagas/$(jobId)).data) == companyId;
+    }
+    function jobIdFrom(data) {
+      return 'jobId' in data && data.jobId is string && data.jobId != '' ? data.jobId
+        : 'vagaId' in data && data.vagaId is string && data.vagaId != '' ? data.vagaId
+        : 'vaga_id' in data && data.vaga_id is string && data.vaga_id != '' ? data.vaga_id
+        : 'currentJobId' in data && data.currentJobId is string && data.currentJobId != '' ? data.currentJobId
+        : '';
+    }
+    function candidateIdFrom(data) {
+      return 'candidateId' in data && data.candidateId is string && data.candidateId != '' ? data.candidateId
+        : 'candidatoId' in data && data.candidatoId is string && data.candidatoId != '' ? data.candidatoId
+        : 'candidato_id' in data && data.candidato_id is string && data.candidato_id != '' ? data.candidato_id
+        : '';
+    }
+    function validApplication(data) {
+      return candidateIdFrom(data) != '' && publicJobOwner(jobIdFrom(data), dataTenant(data));
+    }
+    function validPublicCandidate(data) {
+      let name = 'name' in data && data.name is string && data.name != '' ? data.name
+        : ('nome' in data && data.nome is string ? data.nome : '');
+      return name != '' && 'email' in data && data.email is string && data.email != ''
+        && publicJobOwner(jobIdFrom(data), dataTenant(data));
+    }
+    function linkedHiringExists(data) {
+      return data.contratacaoId is string && data.contratacaoId != ''
+        && existsAfter(/databases/$(database)/documents/contratacoes/$(data.contratacaoId))
+        && dataTenant(getAfter(/databases/$(database)/documents/contratacoes/$(data.contratacaoId)).data) == dataTenant(data);
+    }
+    function validBillingId(id, data) {
+      return data.contratacaoId is string && data.contratacaoId != ''
+        && id == 'cob_' + data.contratacaoId;
+    }
+    function linkedClientExists(data) {
+      return data.clienteId is string && data.clienteId != ''
+        && existsAfter(/databases/$(database)/documents/clientes_headhunter/$(data.clienteId))
+        && dataTenant(getAfter(/databases/$(database)/documents/clientes_headhunter/$(data.clienteId)).data) == dataTenant(data);
+    }
+    function headhunterAuditId(id) {
+      return id.matches('^dados_comerciais_.*') || id.matches('^encaminhamento_financeiro_.*');
+    }
+    function validHeadhunterAudit(id, data) {
+      return headhunterAuditId(id)
+        && data.empresaId is string && data.empresaId != ''
+        && data.companyId is string && data.companyId == data.empresaId
+        && data.userId is string && data.userId != ''
+        && data.contratacaoId is string && data.contratacaoId != ''
+        && data.cobrancaId is string && data.cobrancaId != ''
+        && data.createdAt is string && data.createdAt != '';
+    }
+    function financialHiringFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'clienteId', 'clientId', 'clienteNome', 'remuneracaoCombinada',
+        'tipoCobranca', 'feePercentual', 'feeFixo', 'valorFee',
+        'dataVencimento', 'observacoesComerciais', 'cobrancaId', 'financeiroId',
+        'destino', 'destinoContratacao', 'destinoProcesso', 'encaminhadoPara',
+        'encaminhadoFinanceiro', 'encaminhadoFinanceiroEm', 'statusFinanceiro',
+        'statusProcesso', 'statusEncaminhamento'
+      ]);
+    }
+    function billingMovesToForwarded() {
+      return request.resource.data.status == 'AGUARDANDO_COBRANCA'
+        && resource.data.status != 'AGUARDANDO_COBRANCA';
+    }
+    function billingMovesToChargeStatus() {
+      return request.resource.data.status != resource.data.status
+        && request.resource.data.status in ['FATURADO', 'RECEBIDO', 'FINALIZADO'];
+    }
+    function billingUpdatePermission() {
+      return billingMovesToChargeStatus()
+        ? canChargeHeadhunterFinance()
+        : billingMovesToForwarded()
+          ? canForwardHeadhunterFinance()
+          : canEditHeadhunterFinance();
+    }
     function safeCompanyBrandingUpdate(id) {
       return companyAdmin() && tenantId() == id
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -106,78 +330,18 @@ service cloud.firestore {
         ]);
     }
 
-    function jobIdFrom(data) {
-      return ('jobId' in data && data.jobId is string && data.jobId != '') ? data.jobId
-        : ('vagaId' in data && data.vagaId is string && data.vagaId != '') ? data.vagaId
-        : ('vaga_id' in data && data.vaga_id is string && data.vaga_id != '') ? data.vaga_id
-        : '';
-    }
-    function candidateIdFrom(data) {
-      return ('candidateId' in data && data.candidateId is string && data.candidateId != '') ? data.candidateId
-        : ('candidatoId' in data && data.candidatoId is string && data.candidatoId != '') ? data.candidatoId
-        : ('candidato_id' in data && data.candidato_id is string && data.candidato_id != '') ? data.candidato_id
-        : '';
-    }
-    function publicJob(data) {
-      return ((('publicada' in data) && data.publicada == true) || (('publicado' in data) && data.publicado == true))
-        && dataTenant(data) != ''
-        && (!('status' in data) || (
-          data.status != 'Encerrada' && data.status != 'encerrada' && data.status != 'ENCERRADA'
-          && data.status != 'Fechada' && data.status != 'fechada' && data.status != 'FECHADA'
-          && data.status != 'Cancelada' && data.status != 'cancelada' && data.status != 'CANCELADA'
-        ));
-    }
-    function publicJobOwner(jobId, companyId) {
-      return jobId != '' && companyId != ''
-        && exists(/databases/$(database)/documents/vagas/$(jobId))
-        && publicJob(get(/databases/$(database)/documents/vagas/$(jobId)).data)
-        && dataTenant(get(/databases/$(database)/documents/vagas/$(jobId)).data) == companyId;
-    }
-    function validApplication(data) {
-      return candidateIdFrom(data) != '' && publicJobOwner(jobIdFrom(data), dataTenant(data));
-    }
-    function validPublicCandidate(data) {
-      let name = ('name' in data && data.name is string && data.name != '') ? data.name
-        : (('nome' in data && data.nome is string) ? data.nome : '');
-      return name != '' && ('email' in data) && data.email is string && data.email != ''
-        && publicJobOwner(jobIdFrom(data), dataTenant(data));
-    }
-
-    function operationalCollection(name) {
-      return name in [
-        'clientes','entrevistas','interviews','agenda','solicitacoes_admissao','colaboradores','historico_colaborador',
-        'funcionarios','employees','internal_team','departamentos','cargos','documentos','documents','documentos_colaboradores',
-        'contratos_trabalho','jornadas','registroPontos','marcacoes_ponto','ajustes_ponto','banco_horas','beneficios',
-        'beneficios_colaboradores','beneficios_catalogo','employee_benefits','ferias_solicitacoes','historico_beneficios',
-        'anotacoes_internas_colaborador','ferias','periodos_aquisitivos','regras_ferias','afastamentos','cat_registros',
-        'inss_processos','retorno_trabalho','alertas_dp','folhas_pagamento','rescisoes','solicitacoes_portal','chamados_suporte',
-        'comunicados_empresa','documentos_assinatura_portal','organograma_empresa','cargos_salarios','ponto_registros','registros_ponto',
-        'timeClock','escalas_ponto','escalas','configuracoes_ponto','comprovantes_ponto','logs_ponto','solicitacoes_horas_extras',
-        'fechamentos_ponto','payroll','payroll_periods','payroll_stubs','esocial_events','sst_ambientes','sst_riscos','sst_programas',
-        'sst_planos_acao','sst_agendamentos_exame','sst_resultados_aso','sst_epis_catalogo','sst_entregas_epi','sst_treinamentos_catalogo',
-        'sst_acidentes','sst_cats','relatorios','logs','auditLogs','notifications','notificacoes','headhunter_clients','terminations',
-        'termination_event_rules','headhunter_contracts','headhunter_hirings','headhunter_finance','headhunter_leads','headhunter_proposals',
-        'despesas','comissoes','garantias','historicos_financeiros','builder_pages','builder_versions','builder_fields','builder_menus',
-        'builder_themes','builder_templates','builder_audit_logs','ai_builder_modules','ai_builder_versions','ai_logs','ai_match_auditoria',
-        'exames_ocupacionais','dp_beneficios','dp_folhas','dp_afastamentos','dp_retornos','dp_historico'
-      ];
-    }
-
     match /_health/{id} { allow read: if true; allow write: if false; }
 
     match /usuarios/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsPlatform(resource.data)));
-      allow create: if master() || (companyAdmin() && sameTenant(request.resource.data) && !profileIsPlatform(request.resource.data));
-      allow update: if master() || (companyAdmin() && sameTenant(resource.data) && sameTenant(request.resource.data) && !profileIsPlatform(resource.data) && !profileIsPlatform(request.resource.data));
-      allow delete: if master() && !profileIsMaster(resource.data);
+      allow create, delete: if master();
+      allow update: if master() || (companyManager() && !profileIsPlatform(resource.data) && !profileIsPlatform(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
     }
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || master() || (sameTenant(resource.data) && !profileIsPlatform(resource.data)));
-      allow create: if master() || (companyAdmin() && sameTenant(request.resource.data) && !profileIsPlatform(request.resource.data));
-      allow update: if master() || (companyAdmin() && sameTenant(resource.data) && sameTenant(request.resource.data) && !profileIsPlatform(resource.data) && !profileIsPlatform(request.resource.data));
-      allow delete: if master() && !profileIsMaster(resource.data);
+      allow create, delete: if master();
+      allow update: if master() || (companyManager() && !profileIsPlatform(resource.data) && !profileIsPlatform(request.resource.data) && sameTenant(resource.data) && sameTenant(request.resource.data));
     }
-
     match /empresas/{id} {
       allow read: if master() || (active() && tenantId() == id);
       allow create, delete: if master();
@@ -185,77 +349,94 @@ service cloud.firestore {
     }
     match /companies/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
     match /tenants/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
-    match /empresa_modulos/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
-    match /empresaModulos/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
-    match /companyModules/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
-    match /subscriptions/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
-    match /assinaturas/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
-    match /pagamentos/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
 
     match /vagas/{id} {
       allow read: if publicJob(resource.data) || master() || sameTenant(resource.data);
-      allow create: if master() || tenantWrite(request.resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
+      allow create: if tenantCreate(request.resource.data);
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
     }
     match /jobs/{id} { allow read: if publicJob(resource.data) || master() || sameTenant(resource.data); allow write: if false; }
+
     match /candidatos/{id} {
-      allow create: if validPublicCandidate(request.resource.data) || master() || tenantWrite(request.resource.data);
-      allow read: if master() || sameTenant(resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
+      allow create: if validPublicCandidate(request.resource.data) || (
+        tenantCreate(request.resource.data)
+        && (!('inTalentBank' in request.resource.data) || request.resource.data.inTalentBank == false || talentBankEnabled(dataTenant(request.resource.data)))
+      );
+      allow read: if master() || (
+        sameTenant(resource.data)
+        && (!('inTalentBank' in resource.data) || resource.data.inTalentBank == false || talentBankEnabled(dataTenant(resource.data)))
+      );
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
     }
-    match /candidates/{id} { allow read: if master() || sameTenant(resource.data); allow write: if false; }
+    match /candidates/{id} {
+      allow read: if master() || sameTenant(resource.data);
+      allow write: if false;
+    }
     match /candidaturas/{id} {
-      allow create: if validApplication(request.resource.data) || master() || tenantWrite(request.resource.data);
+      allow create: if validApplication(request.resource.data) || tenantCreate(request.resource.data);
       allow read: if master() || sameTenant(resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
     }
-    match /candidate_applications/{id} { allow read: if master() || sameTenant(resource.data); allow write: if false; }
-    match /applications/{id} { allow read: if master() || sameTenant(resource.data); allow write: if false; }
 
     match /clientes_headhunter/{id} {
-      allow read: if master() || sameTenant(resource.data);
-      allow create: if master() || tenantWrite(request.resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
+      allow read: if master() || (canViewHeadhunterFinance() && sameTenant(resource.data));
+      allow create: if tenantCreate(request.resource.data) && canEditHeadhunterFinance();
+      allow update: if master() || (
+        billingUpdatePermission()
+        && sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+      );
+      allow delete: if master() || (canEditHeadhunterFinance() && sameTenant(resource.data));
     }
+
     match /contratacoes/{id} {
       allow read: if master() || sameTenant(resource.data);
-      allow create: if master() || tenantWrite(request.resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
+      allow create: if tenantCreate(request.resource.data);
+      allow update: if master() || (
+        sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && (!financialHiringFieldsChanged() || canForwardHeadhunterFinance())
+      );
+      allow delete: if master() || sameTenant(resource.data);
     }
+
     match /financeiro_cobrancas/{id} {
-      allow read: if master() || sameTenant(resource.data);
-      allow create: if master() || tenantWrite(request.resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
+      allow read: if master() || (canViewHeadhunterFinance() && sameTenant(resource.data));
+      allow create: if canForwardHeadhunterFinance()
+        && tenantCreate(request.resource.data)
+        && validBillingId(id, request.resource.data)
+        && linkedClientExists(request.resource.data)
+        && linkedHiringExists(request.resource.data);
+      allow update: if master() || (
+        canEditHeadhunterFinance()
+        && sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && request.resource.data.contratacaoId == resource.data.contratacaoId
+        && linkedClientExists(request.resource.data)
+        && linkedHiringExists(request.resource.data)
+      );
+      allow delete: if master() || (canChargeHeadhunterFinance() && sameTenant(resource.data));
     }
-    match /receitas/{id} {
-      allow read: if master() || sameTenant(resource.data);
-      allow create: if master() || tenantWrite(request.resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
-    }
+
     match /audit_logs/{id} {
       allow read: if master() || sameTenant(resource.data);
-      allow create: if master() || tenantWrite(request.resource.data);
-      allow update: if master() || tenantUpdate(resource.data, request.resource.data);
-      allow delete: if master() || (tenantOperator() && sameTenant(resource.data));
+      allow create: if tenantCreate(request.resource.data) && (
+        !headhunterAuditId(id) || (canForwardHeadhunterFinance() && validHeadhunterAudit(id, request.resource.data))
+      );
+      allow update: if master() || (
+        sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && (!headhunterAuditId(id) || (canForwardHeadhunterFinance() && validHeadhunterAudit(id, request.resource.data)))
+      );
+      allow delete: if master() || sameTenant(resource.data);
     }
-
-    match /{collectionName}/{id} {
-      allow read: if operationalCollection(collectionName) && (master() || sameTenant(resource.data));
-      allow create: if operationalCollection(collectionName) && (master() || tenantWrite(request.resource.data));
-      allow update: if operationalCollection(collectionName) && (master() || tenantUpdate(resource.data, request.resource.data));
-      allow delete: if operationalCollection(collectionName) && (master() || (tenantOperator() && sameTenant(resource.data)));
-    }
-
-    match /modulos/{id} { allow read: if active(); allow write: if master(); }
-    match /modules/{id} { allow read: if active(); allow write: if master(); }
-    match /planos/{id} { allow read: if active(); allow write: if master(); }
 
     match /master_leads/{id} { allow read, write: if master(); }
     match /master_finance_receivables/{id} { allow read, write: if master(); }
@@ -266,7 +447,6 @@ service cloud.firestore {
     match /master_backups/{id} { allow read, write: if master(); }
     match /master_settings/{id} { allow read, write: if master(); }
     match /master_idempotency/{id} { allow read, write: if master(); }
-    match /ai_settings/{id} { allow read, write: if master(); }
 
     match /developer_credentials/{id} {
       allow read, create, update: if technicalPlatformAccess() && id == 'developer_credentials_' + request.auth.uid;
@@ -275,7 +455,8 @@ service cloud.firestore {
     match /developer_code_drafts/{id} {
       allow read: if technicalPlatformAccess() && resource.data.createdBy == request.auth.uid;
       allow create: if technicalPlatformAccess() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if technicalPlatformAccess() && resource.data.createdBy == request.auth.uid && request.resource.data.createdBy == request.auth.uid;
+      allow update: if technicalPlatformAccess() && resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid;
       allow delete: if false;
     }
     match /developer_visual_drafts/{id} {
@@ -287,16 +468,85 @@ service cloud.firestore {
     match /developer_test_runs/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
     match /developer_versions/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
 
-    match /google_workspace_integrations/{id} {
-      allow read: if master() || (tenantOperator() && tenantId() == id && sameTenant(resource.data));
-      allow create: if master() || (tenantOperator() && tenantId() == id && tenantWrite(request.resource.data));
-      allow update: if master() || (tenantOperator() && tenantId() == id && tenantUpdate(resource.data, request.resource.data));
-      allow delete: if master() || (tenantOperator() && tenantId() == id && sameTenant(resource.data));
-    }
+    match /google_workspace_integrations/{id} { allow read, write: if false; }
     match /google_oauth_states/{id} { allow read, write: if false; }
     match /interview_transcripts/{id} { allow read, write: if false; }
     match /interview_diagnostics/{id} { allow read, write: if false; }
 
+    match /receitas/{id} {
+      allow read: if master() || (canViewHeadhunterFinance() && sameTenant(resource.data));
+      allow create: if canEditHeadhunterFinance()
+        && tenantCreate(request.resource.data)
+        && request.resource.data.contratacaoId is string
+        && request.resource.data.contratacaoId != ''
+        && linkedHiringExists(request.resource.data);
+      allow update: if master() || (
+        canEditHeadhunterFinance()
+        && sameTenant(resource.data)
+        && sameTenant(request.resource.data)
+        && dataTenant(request.resource.data) == dataTenant(resource.data)
+        && request.resource.data.contratacaoId == resource.data.contratacaoId
+        && linkedHiringExists(request.resource.data)
+      );
+      allow delete: if master() || (canChargeHeadhunterFinance() && sameTenant(resource.data));
+    }
+
+    match /candidate_applications/{id} { allow read: if master() || sameTenant(resource.data); allow write: if false; }
+    match /applications/{id} { allow read: if master() || sameTenant(resource.data); allow write: if false; }
+
+    match /{collectionName}/{id} {
+      allow read: if collectionName in [
+        'clientes','entrevistas','interviews','agenda','solicitacoes_admissao','colaboradores',
+        'historico_colaborador','funcionarios','employees','internal_team','departamentos','cargos','documentos','documents',
+        'documentos_colaboradores','contratos_trabalho','jornadas','registroPontos','marcacoes_ponto','ajustes_ponto',
+        'banco_horas','beneficios','beneficios_colaboradores','beneficios_catalogo','employee_benefits','ferias_solicitacoes',
+        'historico_beneficios','anotacoes_internas_colaborador','ferias','periodos_aquisitivos',
+        'regras_ferias','afastamentos','cat_registros','inss_processos','retorno_trabalho','alertas_dp',
+        'folhas_pagamento','rescisoes','solicitacoes_portal','chamados_suporte','comunicados_empresa',
+        'documentos_assinatura_portal','organograma_empresa','cargos_salarios','ponto_registros',
+        'registros_ponto','timeClock','escalas_ponto','escalas','configuracoes_ponto','comprovantes_ponto','logs_ponto',
+        'solicitacoes_horas_extras','fechamentos_ponto','payroll','payroll_periods','payroll_stubs','esocial_events',
+        'sst_ambientes','sst_riscos','sst_programas','sst_planos_acao','sst_agendamentos_exame','sst_resultados_aso',
+        'sst_epis_catalogo','sst_entregas_epi','sst_treinamentos_catalogo','sst_acidentes','sst_cats','relatorios','logs','auditLogs',
+        'notifications','notificacoes','headhunter_clients','terminations','termination_event_rules','headhunter_contracts',
+        'headhunter_hirings','headhunter_finance','headhunter_leads','headhunter_proposals','despesas','comissoes','garantias',
+        'historicos_financeiros','builder_pages','builder_versions','builder_fields','builder_menus','builder_themes','builder_templates',
+        'builder_audit_logs','ai_match_auditoria','ai_builder_modules','ai_builder_versions','ai_logs','exames_ocupacionais',
+        'dp_beneficios','dp_folhas','dp_afastamentos','dp_retornos','dp_historico'
+      ] && (master() || sameTenant(resource.data));
+      allow create: if collectionName in [
+        'clientes','entrevistas','interviews','agenda','solicitacoes_admissao','colaboradores',
+        'historico_colaborador','funcionarios','employees','internal_team','departamentos','cargos','documentos','documents',
+        'documentos_colaboradores','contratos_trabalho','jornadas','registroPontos','marcacoes_ponto','ajustes_ponto',
+        'banco_horas','beneficios','beneficios_colaboradores','beneficios_catalogo','employee_benefits','ferias_solicitacoes',
+        'historico_beneficios','anotacoes_internas_colaborador','ferias','periodos_aquisitivos',
+        'regras_ferias','afastamentos','cat_registros','inss_processos','retorno_trabalho','alertas_dp',
+        'folhas_pagamento','rescisoes','solicitacoes_portal','chamados_suporte','comunicados_empresa',
+        'documentos_assinatura_portal','organograma_empresa','cargos_salarios','ponto_registros',
+        'registros_ponto','timeClock','escalas_ponto','escalas','configuracoes_ponto','comprovantes_ponto','logs_ponto',
+        'solicitacoes_horas_extras','fechamentos_ponto','payroll','payroll_periods','payroll_stubs','esocial_events',
+        'sst_ambientes','sst_riscos','sst_programas','sst_planos_acao','sst_agendamentos_exame','sst_resultados_aso',
+        'sst_epis_catalogo','sst_entregas_epi','sst_treinamentos_catalogo','sst_acidentes','sst_cats','relatorios','logs','auditLogs',
+        'notifications','notificacoes','headhunter_clients','terminations','termination_event_rules','headhunter_contracts',
+        'headhunter_hirings','headhunter_finance','headhunter_leads','headhunter_proposals','despesas','comissoes','garantias',
+        'historicos_financeiros','builder_pages','builder_versions','builder_fields','builder_menus','builder_themes','builder_templates',
+        'builder_audit_logs','ai_match_auditoria','ai_builder_modules','ai_builder_versions','ai_logs','exames_ocupacionais',
+        'dp_beneficios','dp_folhas','dp_afastamentos','dp_retornos','dp_historico'
+      ] && tenantCreate(request.resource.data);
+      allow update: if master() || (sameTenant(resource.data) && sameTenant(request.resource.data));
+      allow delete: if master() || sameTenant(resource.data);
+    }
+
+    match /modulos/{id} { allow read: if active(); allow write: if master(); }
+    match /modules/{id} { allow read: if active(); allow write: if master(); }
+    match /planos/{id} { allow read: if active(); allow write: if master(); }
+    match /empresa_modulos/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
+    match /empresaModulos/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
+    match /companyModules/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
+    match /subscriptions/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
+    match /assinaturas/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
+    match /pagamentos/{id} { allow read: if master() || sameTenant(resource.data); allow write: if master(); }
+    match /ai_settings/{id} { allow read, write: if master(); }
     match /{document=**} { allow read, write: if false; }
   }
 }
