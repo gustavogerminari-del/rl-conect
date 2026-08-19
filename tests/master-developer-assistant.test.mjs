@@ -43,11 +43,11 @@ test('chave Gemini não usa bloqueio local de formato e só é aceita após vali
   assert.doesNotMatch(route, /console\.(?:info|error).*submittedKey/);
 });
 
-test('Gemini usa modelo habilitado na conta e não depende de nome fixo que pode retornar 404', async () => {
+test('Gemini usa modelo habilitado na conta e Interactions API estável', async () => {
   const route = await read('app/api/master/developer-assistant/route.ts');
   const helper = await read('app/api/master/developer-assistant/geminiKey.ts');
   const interactions = await read('app/api/master/developer-assistant/geminiInteractions.ts');
-  assert.match(interactions, /v1beta\/interactions/);
+  assert.match(interactions, /v1\/interactions/);
   assert.match(interactions, /gemini-3\.6-flash/);
   assert.match(interactions, /gemini-3\.1-flash-lite/);
   assert.match(interactions, /'x-goog-api-key': options\.apiKey/);
