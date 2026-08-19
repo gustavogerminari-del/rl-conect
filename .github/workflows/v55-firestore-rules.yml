@@ -1,0 +1,58 @@
+name: V55 Firestore Rules
+
+on:
+  push:
+    branches:
+      - codex/area-programador-v55
+    paths:
+      - 'firebase/firestore.rules'
+      - 'firebase.json'
+      - '.github/workflows/v55-firestore-rules.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools
+
+      - name: Check Firebase credential
+        id: firebase
+        shell: bash
+        run: |
+          if [[ -n "${FIREBASE_SERVICE_ACCOUNT_JSON:-}" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT_JSON is not configured; rules were not published."
+          fi
+
+      - name: Prepare Firebase credential
+        if: steps.firebase.outputs.available == 'true'
+        id: credential
+        shell: bash
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
+          PROJECT_ID=$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(!j.project_id)process.exit(2);process.stdout.write(j.project_id)" "$RUNNER_TEMP/firebase-service-account.json")
+          echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
+
+      - name: Deploy Firestore rules
+        if: steps.firebase.outputs.available == 'true'
+        run: firebase deploy --only firestore:rules --project "${{ steps.credential.outputs.project_id }}" --non-interactive
+
+      - name: Rules deploy skipped
+        if: steps.firebase.outputs.available != 'true'
+        run: echo "FIRESTORE_RULES_DEPLOY_SKIPPED_NO_SERVICE_ACCOUNT"
