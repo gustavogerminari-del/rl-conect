@@ -46,7 +46,7 @@ async function callGenerateContentFallback(options: {
 }) {
   let lastError = new GeminiInteractionError('Nenhum modelo Gemini disponível.', 503);
   for (const model of options.models) {
-    const response = await options.fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    const response = await options.fetcher(`https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
       body: JSON.stringify({
@@ -85,7 +85,7 @@ export async function callGeminiInteractions(options: {
   let lastError = new GeminiInteractionError('Nenhum modelo Gemini disponível.', 503);
 
   for (const model of models) {
-    const response = await fetcher('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    const response = await fetcher('https://generativelanguage.googleapis.com/v1/interactions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
       body: JSON.stringify({ model, store: false, input: options.input }),
