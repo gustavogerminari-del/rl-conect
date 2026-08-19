@@ -9,14 +9,16 @@ service cloud.firestore {
     function legacy() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
 
     function profileActive(data) {
-      return data.ativo != false
-        && data.status != 'Inativo' && data.status != 'INATIVO'
-        && data.status != 'Bloqueado' && data.status != 'BLOQUEADO'
-        && data.status != 'Suspenso' && data.status != 'SUSPENSO'
-        && data.status != 'Desativado' && data.status != 'DESATIVADO';
+      return (!('ativo' in data) || data.ativo != false)
+        && (!('status' in data) || (
+          data.status != 'Inativo' && data.status != 'INATIVO'
+          && data.status != 'Bloqueado' && data.status != 'BLOQUEADO'
+          && data.status != 'Suspenso' && data.status != 'SUSPENSO'
+          && data.status != 'Desativado' && data.status != 'DESATIVADO'
+        ));
     }
 
-    // usuarios/{uid} é canônico. users/{uid} só é fallback.
+    // usuarios/{uid} é a fonte canônica. users/{uid} é apenas fallback legado.
     function active() {
       return signedIn() && (
         (hasPrimary() && profileActive(primary())) ||
@@ -42,8 +44,11 @@ service cloud.firestore {
     function companyAdminRole(value) {
       return value in ['ADMIN_EMPRESA','ADMIN','ADMINISTRADOR','Administrador','ADMINISTRADOR_EMPRESA','Administrador da Empresa','EMPRESA_ADMIN','GESTOR_EMPRESA'];
     }
-    function profileIsMaster(data) { return masterRole(data.role) || masterRole(data.tipoUsuario); }
-    function profileIsDeveloper(data) { return developerRole(data.role) || developerRole(data.tipoUsuario); }
+
+    function fieldRole(data) { return ('role' in data) ? data.role : ''; }
+    function fieldTipoUsuario(data) { return ('tipoUsuario' in data) ? data.tipoUsuario : ''; }
+    function profileIsMaster(data) { return masterRole(fieldRole(data)) || masterRole(fieldTipoUsuario(data)); }
+    function profileIsDeveloper(data) { return developerRole(fieldRole(data)) || developerRole(fieldTipoUsuario(data)); }
     function profileIsPlatform(data) { return profileIsMaster(data) || profileIsDeveloper(data); }
 
     function master() {
@@ -61,23 +66,22 @@ service cloud.firestore {
     function technicalPlatformAccess() { return master() || developer(); }
     function tenantOperator() {
       return active() && (
-        (hasPrimary() && (operatorRole(primary().role) || operatorRole(primary().tipoUsuario))) ||
-        (!hasPrimary() && hasLegacy() && (operatorRole(legacy().role) || operatorRole(legacy().tipoUsuario)))
+        (hasPrimary() && (operatorRole(fieldRole(primary())) || operatorRole(fieldTipoUsuario(primary())))) ||
+        (!hasPrimary() && hasLegacy() && (operatorRole(fieldRole(legacy())) || operatorRole(fieldTipoUsuario(legacy()))))
       );
     }
     function companyAdmin() {
       return active() && (
-        (hasPrimary() && (companyAdminRole(primary().role) || companyAdminRole(primary().tipoUsuario))) ||
-        (!hasPrimary() && hasLegacy() && (companyAdminRole(legacy().role) || companyAdminRole(legacy().tipoUsuario)))
+        (hasPrimary() && (companyAdminRole(fieldRole(primary())) || companyAdminRole(fieldTipoUsuario(primary())))) ||
+        (!hasPrimary() && hasLegacy() && (companyAdminRole(fieldRole(legacy())) || companyAdminRole(fieldTipoUsuario(legacy()))))
       );
     }
 
-    // O projeto usa quatro aliases de tenant; todos são aceitos.
     function dataTenant(data) {
-      return data.empresa_id is string && data.empresa_id != '' ? data.empresa_id
-        : data.empresaId is string && data.empresaId != '' ? data.empresaId
-        : data.companyId is string && data.companyId != '' ? data.companyId
-        : data.tenantId is string && data.tenantId != '' ? data.tenantId
+      return ('empresa_id' in data && data.empresa_id is string && data.empresa_id != '') ? data.empresa_id
+        : ('empresaId' in data && data.empresaId is string && data.empresaId != '') ? data.empresaId
+        : ('companyId' in data && data.companyId is string && data.companyId != '') ? data.companyId
+        : ('tenantId' in data && data.tenantId is string && data.tenantId != '') ? data.tenantId
         : '';
     }
     function tenantId() {
@@ -92,30 +96,36 @@ service cloud.firestore {
         && (dataTenant(oldData) == tenantId() || dataTenant(oldData) == '');
     }
 
+    function safeCompanyBrandingUpdate(id) {
+      return companyAdmin() && tenantId() == id
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'empresa_id','empresaId','companyId','tenantId',
+          'nome','logo_url','banner_url','descricao','cor_principal',
+          'contato_email','contato_telefone','website','linkedin_url','instagram_url',
+          'updatedAt','updatedBy','atualizado_em'
+        ]);
+    }
+
     function jobIdFrom(data) {
-      return data.jobId is string && data.jobId != '' ? data.jobId
-        : data.vagaId is string && data.vagaId != '' ? data.vagaId
-        : data.vaga_id is string && data.vaga_id != '' ? data.vaga_id
+      return ('jobId' in data && data.jobId is string && data.jobId != '') ? data.jobId
+        : ('vagaId' in data && data.vagaId is string && data.vagaId != '') ? data.vagaId
+        : ('vaga_id' in data && data.vaga_id is string && data.vaga_id != '') ? data.vaga_id
         : '';
     }
     function candidateIdFrom(data) {
-      return data.candidateId is string && data.candidateId != '' ? data.candidateId
-        : data.candidatoId is string && data.candidatoId != '' ? data.candidatoId
-        : data.candidato_id is string && data.candidato_id != '' ? data.candidato_id
-        : '';
-    }
-    function applicationIdFrom(data) {
-      return data.applicationId is string && data.applicationId != '' ? data.applicationId
-        : data.candidaturaId is string && data.candidaturaId != '' ? data.candidaturaId
-        : data.candidatura_id is string && data.candidatura_id != '' ? data.candidatura_id
+      return ('candidateId' in data && data.candidateId is string && data.candidateId != '') ? data.candidateId
+        : ('candidatoId' in data && data.candidatoId is string && data.candidatoId != '') ? data.candidatoId
+        : ('candidato_id' in data && data.candidato_id is string && data.candidato_id != '') ? data.candidato_id
         : '';
     }
     function publicJob(data) {
-      return (data.publicada == true || data.publicado == true)
+      return ((('publicada' in data) && data.publicada == true) || (('publicado' in data) && data.publicado == true))
         && dataTenant(data) != ''
-        && data.status != 'Encerrada' && data.status != 'encerrada' && data.status != 'ENCERRADA'
-        && data.status != 'Fechada' && data.status != 'fechada' && data.status != 'FECHADA'
-        && data.status != 'Cancelada' && data.status != 'cancelada' && data.status != 'CANCELADA';
+        && (!('status' in data) || (
+          data.status != 'Encerrada' && data.status != 'encerrada' && data.status != 'ENCERRADA'
+          && data.status != 'Fechada' && data.status != 'fechada' && data.status != 'FECHADA'
+          && data.status != 'Cancelada' && data.status != 'cancelada' && data.status != 'CANCELADA'
+        ));
     }
     function publicJobOwner(jobId, companyId) {
       return jobId != '' && companyId != ''
@@ -123,17 +133,13 @@ service cloud.firestore {
         && publicJob(get(/databases/$(database)/documents/vagas/$(jobId)).data)
         && dataTenant(get(/databases/$(database)/documents/vagas/$(jobId)).data) == companyId;
     }
-    function linkedJobSameTenant(data) {
-      let id = jobIdFrom(data);
-      return id != '' && exists(/databases/$(database)/documents/vagas/$(id))
-        && dataTenant(get(/databases/$(database)/documents/vagas/$(id)).data) == tenantId();
-    }
     function validApplication(data) {
       return candidateIdFrom(data) != '' && publicJobOwner(jobIdFrom(data), dataTenant(data));
     }
     function validPublicCandidate(data) {
-      let name = data.name is string && data.name != '' ? data.name : data.nome;
-      return name is string && name != '' && data.email is string && data.email != ''
+      let name = ('name' in data && data.name is string && data.name != '') ? data.name
+        : (('nome' in data && data.nome is string) ? data.nome : '');
+      return name != '' && ('email' in data) && data.email is string && data.email != ''
         && publicJobOwner(jobIdFrom(data), dataTenant(data));
     }
 
@@ -172,7 +178,11 @@ service cloud.firestore {
       allow delete: if master() && !profileIsMaster(resource.data);
     }
 
-    match /empresas/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
+    match /empresas/{id} {
+      allow read: if master() || (active() && tenantId() == id);
+      allow create, delete: if master();
+      allow update: if master() || safeCompanyBrandingUpdate(id);
+    }
     match /companies/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
     match /tenants/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
     match /empresa_modulos/{id} { allow read: if master() || (active() && tenantId() == id); allow write: if master(); }
@@ -268,7 +278,11 @@ service cloud.firestore {
       allow update: if technicalPlatformAccess() && resource.data.createdBy == request.auth.uid && request.resource.data.createdBy == request.auth.uid;
       allow delete: if false;
     }
-    match /developer_visual_drafts/{id} { allow read: if technicalPlatformAccess(); allow create: if technicalPlatformAccess() && request.resource.data.createdBy == request.auth.uid && request.resource.data.appliedToProduction == false; allow update, delete: if false; }
+    match /developer_visual_drafts/{id} {
+      allow read: if technicalPlatformAccess();
+      allow create: if technicalPlatformAccess() && request.resource.data.createdBy == request.auth.uid && request.resource.data.appliedToProduction == false;
+      allow update, delete: if false;
+    }
     match /developer_logs/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
     match /developer_test_runs/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
     match /developer_versions/{id} { allow read, create: if technicalPlatformAccess(); allow update, delete: if false; }
