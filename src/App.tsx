@@ -18,6 +18,19 @@ import { MasterBuilderView } from './components/views/MasterBuilderView';
 import { DeveloperArea } from './developer/DeveloperArea';
 
 const DEVELOPER_AREA_PATH = '/master/programador';
+const URL_TABS = new Set<ViewTab>([
+  'dashboard',
+  'master_admin',
+  'construtor_ia',
+  'recrutamento',
+  'headhunter',
+  'portal_vagas',
+  'ia_screening',
+  'agenda',
+  'departamento_pessoal',
+  'audit_logs',
+  'settings',
+]);
 
 function publicCompanyFromUrl() {
   const pathMatch = window.location.pathname.match(/\/vagas\/([^/?#]+)/);
@@ -29,8 +42,13 @@ function developerAreaFromUrl() {
   return window.location.pathname.replace(/\/+$/, '') === DEVELOPER_AREA_PATH;
 }
 
+function tabFromUrl(): ViewTab {
+  const requested = new URLSearchParams(window.location.search).get('tab') as ViewTab | null;
+  return requested && URL_TABS.has(requested) ? requested : 'dashboard';
+}
+
 export function App() {
-  const [currentTab, setCurrentTab] = useState<ViewTab>('dashboard');
+  const [currentTab, setCurrentTab] = useState<ViewTab>(tabFromUrl);
   const [status, setStatus] = useState(dataService.getFirebaseStatus());
   const [publicEmpresaId, setPublicEmpresaId] = useState<string | null>(publicCompanyFromUrl);
   const [publicReady, setPublicReady] = useState(false);
@@ -42,6 +60,8 @@ export function App() {
     const syncRoute = () => {
       setPublicEmpresaId(publicCompanyFromUrl());
       setDeveloperAreaRequested(developerAreaFromUrl());
+      const requestedTab = tabFromUrl();
+      if (requestedTab !== 'dashboard' || new URLSearchParams(window.location.search).has('tab')) setCurrentTab(requestedTab);
     };
     window.addEventListener('popstate', syncRoute);
     window.addEventListener('hashchange', syncRoute);
@@ -70,7 +90,7 @@ export function App() {
       setDeveloperAreaRequested(true);
       return;
     }
-    if (developerAreaFromUrl()) window.history.pushState({}, '', '/');
+    if (developerAreaFromUrl() || window.location.search) window.history.pushState({}, '', '/');
     setDeveloperAreaRequested(false);
     setCurrentTab(tab);
   };
