@@ -18,9 +18,10 @@ test('Firestore tenant isolation accepts all aliases used by RL Connect', async 
 test('Firestore allows the operational collections used by Firebase bridge and DP', async () => {
   const rules = await text('firebase/firestore.rules');
   for (const name of [
-    'clientes','registroPontos','departamentos','cargos','logs','notificacoes','solicitacoes_admissao','financeiro_cobrancas',
+    'clientes','registroPontos','departamentos','cargos','logs','notificacoes','solicitacoes_admissao',
     'exames_ocupacionais','dp_beneficios','dp_folhas','dp_afastamentos','dp_retornos'
   ]) assert.ok(rules.includes(`'${name}'`), `missing Firestore collection ${name}`);
+  assert.match(rules, /match \/financeiro_cobrancas\/\{id\}/, 'missing financeiro_cobrancas rule');
 });
 
 test('automatic tenant persistence does not overwrite master commercial configuration', async () => {
