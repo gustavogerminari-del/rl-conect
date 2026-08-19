@@ -11,7 +11,6 @@ import {
   Activity,
   RotateCcw,
   ClipboardCheck,
-  CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
@@ -33,6 +32,8 @@ export const DepartamentoPessoalView: React.FC = () => {
   const [departamentoFunc, setDepartamentoFunc] = useState('Administrativo');
   const [salarioFunc, setSalarioFunc] = useState(3000);
   const [cpfAdmissao, setCpfAdmissao] = useState<Record<string, string>>({});
+  const [feriasInicio, setFeriasInicio] = useState<Record<string, string>>({});
+  const [feriasFim, setFeriasFim] = useState<Record<string, string>>({});
 
   const refreshData = () => {
     setFuncionarios(dataService.getFuncionarios() as any[]);
@@ -62,6 +63,7 @@ export const DepartamentoPessoalView: React.FC = () => {
       beneficios_status: 'PENDENTE',
       folha_status: 'PENDENTE',
       afastamento_status: 'ATIVO',
+      ferias_status: 'SEM_PROGRAMACAO',
     } as any);
     setShowFuncModal(false);
     setNomeFunc('');
@@ -79,6 +81,7 @@ export const DepartamentoPessoalView: React.FC = () => {
       beneficios_status: 'PENDENTE',
       folha_status: 'PENDENTE',
       afastamento_status: 'ATIVO',
+      ferias_status: 'SEM_PROGRAMACAO',
     });
     refreshData();
   };
@@ -95,6 +98,18 @@ export const DepartamentoPessoalView: React.FC = () => {
     refreshData();
   };
 
+  const programarFerias = (func: any) => {
+    const inicio = feriasInicio[func.id];
+    const fim = feriasFim[func.id];
+    if (!inicio || !fim || fim < inicio) return;
+    updateFuncionario(func, {
+      ferias_status: 'PROGRAMADA',
+      ferias_inicio: inicio,
+      ferias_fim: fim,
+      ferias_atualizado_em: new Date().toISOString(),
+    });
+  };
+
   const tabs: Array<{ key: Tab; label: string; count?: number }> = [
     { key: 'admissoes', label: 'Admissões', count: admissoes.filter((a) => a.status !== 'CONCLUIDA').length },
     { key: 'colaboradores', label: 'Colaboradores', count: funcionarios.length },
@@ -102,7 +117,7 @@ export const DepartamentoPessoalView: React.FC = () => {
     { key: 'beneficios', label: 'Benefícios' },
     { key: 'folha', label: 'Folha' },
     { key: 'ponto', label: 'Ponto', count: pontos.length },
-    { key: 'ferias', label: 'Férias', count: ferias.length },
+    { key: 'ferias', label: 'Férias', count: funcionarios.filter((f) => f.ferias_status === 'PROGRAMADA').length + ferias.length },
     { key: 'afastamentos', label: 'Afastamentos' },
   ];
 
@@ -147,15 +162,8 @@ export const DepartamentoPessoalView: React.FC = () => {
           ) : admissoes.filter((a) => a.status !== 'CONCLUIDA').map((adm) => (
             <div key={adm.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <span className="text-[10px] font-black uppercase text-indigo-600">Vindo do Recrutamento</span>
-                  <h3 className="font-bold text-slate-900">{adm.candidato_nome}</h3>
-                  <p className="text-xs text-slate-500">{adm.cargo} • {adm.departamento} • R$ {Number(adm.salario_sugerido || 0).toLocaleString('pt-BR')}</p>
-                </div>
-                <div className="flex gap-2">
-                  <input value={cpfAdmissao[adm.id] || ''} onChange={(e) => setCpfAdmissao((s) => ({ ...s, [adm.id]: e.target.value }))} placeholder="CPF do contratado" className="rounded-xl border border-slate-200 px-3 py-2 text-xs" />
-                  <button onClick={() => handleConcluirAdmissao(adm)} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white">Concluir admissão</button>
-                </div>
+                <div><span className="text-[10px] font-black uppercase text-indigo-600">Vindo do Recrutamento</span><h3 className="font-bold text-slate-900">{adm.candidato_nome}</h3><p className="text-xs text-slate-500">{adm.cargo} • {adm.departamento} • R$ {Number(adm.salario_sugerido || 0).toLocaleString('pt-BR')}</p></div>
+                <div className="flex gap-2"><input value={cpfAdmissao[adm.id] || ''} onChange={(e) => setCpfAdmissao((s) => ({ ...s, [adm.id]: e.target.value }))} placeholder="CPF do contratado" className="rounded-xl border border-slate-200 px-3 py-2 text-xs" /><button onClick={() => handleConcluirAdmissao(adm)} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white">Concluir admissão</button></div>
               </div>
             </div>
           ))}
@@ -163,41 +171,19 @@ export const DepartamentoPessoalView: React.FC = () => {
       )}
 
       {activeTab === 'colaboradores' && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {funcionarios.map((func) => (
-            <div key={func.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-2"><div><h3 className="font-bold text-slate-900">{func.nome}</h3><p className="text-xs text-slate-500">{func.cargo || func.cargo_nome} • {func.departamento || func.departamento_nome}</p></div><span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-800">{func.status}</span></div>
-              <div className="mt-3 space-y-1 border-t pt-3 text-xs text-slate-600"><p>CPF: {func.cpf}</p><p>Admissão: {func.data_admissao}</p><p>Salário: R$ {Number(func.salario || 0).toLocaleString('pt-BR')}</p></div>
-            </div>
-          ))}
-        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{funcionarios.map((func) => <div key={func.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-2"><div><h3 className="font-bold text-slate-900">{func.nome}</h3><p className="text-xs text-slate-500">{func.cargo || func.cargo_nome} • {func.departamento || func.departamento_nome}</p></div><span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-800">{func.status}</span></div><div className="mt-3 space-y-1 border-t pt-3 text-xs text-slate-600"><p>CPF: {func.cpf}</p><p>Admissão: {func.data_admissao}</p><p>Salário: R$ {Number(func.salario || 0).toLocaleString('pt-BR')}</p></div></div>)}</div>
       )}
 
       {activeTab === 'exames' && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {funcionarios.map((func) => (
-            <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm">
-              <Stethoscope className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Exame admissional: <b>{func.exame_admissional_status || 'PENDENTE'}</b></p>
-              <div className="mt-3 flex gap-2"><button onClick={() => updateFuncionario(func, { exame_admissional_status: 'APTO', exame_admissional_data: today() })} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Marcar APTO</button><button onClick={() => updateFuncionario(func, { exame_admissional_status: 'INAPTO', exame_admissional_data: today() })} className="rounded-lg bg-rose-100 px-3 py-2 text-xs font-bold text-rose-700">INAPTO</button></div>
-            </div>
-          ))}
-        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{funcionarios.map((func) => <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><Stethoscope className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Exame admissional: <b>{func.exame_admissional_status || 'PENDENTE'}</b></p><div className="mt-3 flex gap-2"><button onClick={() => updateFuncionario(func, { exame_admissional_status: 'APTO', exame_admissional_data: today() })} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Marcar APTO</button><button onClick={() => updateFuncionario(func, { exame_admissional_status: 'INAPTO', exame_admissional_data: today() })} className="rounded-lg bg-rose-100 px-3 py-2 text-xs font-bold text-rose-700">INAPTO</button></div></div>)}</div>
       )}
 
       {activeTab === 'beneficios' && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {funcionarios.map((func) => (
-            <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><Gift className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Status: <b>{func.beneficios_status || 'PENDENTE'}</b></p><button onClick={() => updateFuncionario(func, { beneficios_status: 'ATIVO', beneficios: ['Vale Transporte', 'Vale Alimentação'], beneficios_atualizado_em: new Date().toISOString() })} className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white">Ativar VT + VA</button></div>
-          ))}
-        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{funcionarios.map((func) => <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><Gift className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Status: <b>{func.beneficios_status || 'PENDENTE'}</b></p><button onClick={() => updateFuncionario(func, { beneficios_status: 'ATIVO', beneficios: ['Vale Transporte', 'Vale Alimentação'], beneficios_atualizado_em: new Date().toISOString() })} className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white">Ativar VT + VA</button></div>)}</div>
       )}
 
       {activeTab === 'folha' && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {funcionarios.map((func) => (
-            <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><WalletCards className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Folha: <b>{func.folha_status || 'PENDENTE'}</b></p><p className="mt-1 text-xs">Base: R$ {Number(func.salario || 0).toLocaleString('pt-BR')}</p><button disabled={func.exame_admissional_status !== 'APTO'} onClick={() => updateFuncionario(func, { folha_status: 'ATIVO', folha_competencia: new Date().toISOString().slice(0, 7) })} className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">Incluir na folha</button>{func.exame_admissional_status !== 'APTO' && <p className="mt-2 text-[10px] font-semibold text-amber-700">Exame APTO obrigatório antes da folha.</p>}</div>
-          ))}
-        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{funcionarios.map((func) => <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><WalletCards className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Folha: <b>{func.folha_status || 'PENDENTE'}</b></p><p className="mt-1 text-xs">Base: R$ {Number(func.salario || 0).toLocaleString('pt-BR')}</p><button disabled={func.exame_admissional_status !== 'APTO'} onClick={() => updateFuncionario(func, { folha_status: 'ATIVO', folha_competencia: new Date().toISOString().slice(0, 7) })} className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">Incluir na folha</button>{func.exame_admissional_status !== 'APTO' && <p className="mt-2 text-[10px] font-semibold text-amber-700">Exame APTO obrigatório antes da folha.</p>}</div>)}</div>
       )}
 
       {activeTab === 'ponto' && (
@@ -205,31 +191,18 @@ export const DepartamentoPessoalView: React.FC = () => {
       )}
 
       {activeTab === 'ferias' && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{ferias.map((f) => <div key={f.id} className="rounded-2xl border bg-white p-5 shadow-sm"><Calendar className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{funcionarios.find((x) => x.id === f.funcionario_id)?.nome || 'Colaborador'}</h3><p className="text-xs">{f.data_inicio} até {f.data_fim}</p><p className="text-xs text-slate-500">{f.dias} dias • {f.status}</p></div>)}</div>
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{funcionarios.map((func) => <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><Calendar className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Status: <b>{func.ferias_status || 'SEM_PROGRAMACAO'}</b></p>{func.ferias_inicio && <p className="mt-1 text-xs">{func.ferias_inicio} até {func.ferias_fim}</p>}<div className="mt-3 grid grid-cols-2 gap-2"><input type="date" value={feriasInicio[func.id] || ''} onChange={(e) => setFeriasInicio((s) => ({ ...s, [func.id]: e.target.value }))} className="rounded-lg border p-2 text-xs" /><input type="date" value={feriasFim[func.id] || ''} onChange={(e) => setFeriasFim((s) => ({ ...s, [func.id]: e.target.value }))} className="rounded-lg border p-2 text-xs" /></div><button onClick={() => programarFerias(func)} className="mt-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white">Programar férias</button></div>)}</div>
+          {ferias.length > 0 && <div className="rounded-2xl border bg-white p-5"><h3 className="font-bold">Histórico legado de férias</h3><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{ferias.map((f) => <div key={f.id} className="rounded-xl bg-slate-50 p-3 text-xs"><b>{funcionarios.find((x) => x.id === f.funcionario_id)?.nome || 'Colaborador'}</b><p>{f.data_inicio} até {f.data_fim}</p><p>{f.dias} dias • {f.status}</p></div>)}</div></div>}
+        </div>
       )}
 
       {activeTab === 'afastamentos' && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {funcionarios.map((func) => (
-            <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><Activity className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Situação: <b>{func.afastamento_status || 'ATIVO'}</b></p><div className="mt-3 flex gap-2">{func.afastamento_status === 'AFASTADO' ? <button onClick={() => updateFuncionario(func, { afastamento_status: 'ATIVO', retorno_trabalho_data: today(), status: 'ativo' })} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white"><RotateCcw className="mr-1 inline h-3 w-3" />Registrar retorno</button> : <button onClick={() => updateFuncionario(func, { afastamento_status: 'AFASTADO', afastamento_inicio: today(), status: 'afastado' })} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950">Registrar afastamento</button>}</div></div>
-          ))}
-        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{funcionarios.map((func) => <div key={func.id} className="rounded-2xl border bg-white p-5 shadow-sm"><Activity className="h-5 w-5 text-indigo-600" /><h3 className="mt-2 font-bold">{func.nome}</h3><p className="text-xs text-slate-500">Situação: <b>{func.afastamento_status || 'ATIVO'}</b></p><div className="mt-3 flex gap-2">{func.afastamento_status === 'AFASTADO' ? <button onClick={() => updateFuncionario(func, { afastamento_status: 'ATIVO', retorno_trabalho_data: today(), status: 'ativo' })} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white"><RotateCcw className="mr-1 inline h-3 w-3" />Registrar retorno</button> : <button onClick={() => updateFuncionario(func, { afastamento_status: 'AFASTADO', afastamento_inicio: today(), status: 'afastado' })} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950">Registrar afastamento</button>}</div></div>)}</div>
       )}
 
       {showFuncModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b pb-3"><h3 className="font-bold">Admissão Manual</h3><button onClick={() => setShowFuncModal(false)}><X className="h-5 w-5" /></button></div>
-            <form onSubmit={handleCreateFuncionario} className="mt-4 space-y-3 text-xs">
-              <input required value={nomeFunc} onChange={(e) => setNomeFunc(e.target.value)} placeholder="Nome completo" className="w-full rounded-xl border p-2.5" />
-              <input required value={cpfFunc} onChange={(e) => setCpfFunc(e.target.value)} placeholder="CPF" className="w-full rounded-xl border p-2.5" />
-              <input value={cargoFunc} onChange={(e) => setCargoFunc(e.target.value)} placeholder="Cargo" className="w-full rounded-xl border p-2.5" />
-              <input value={departamentoFunc} onChange={(e) => setDepartamentoFunc(e.target.value)} placeholder="Departamento" className="w-full rounded-xl border p-2.5" />
-              <input type="number" min="1" value={salarioFunc} onChange={(e) => setSalarioFunc(Number(e.target.value))} className="w-full rounded-xl border p-2.5" />
-              <button className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 font-bold text-white"><ClipboardCheck className="mr-2 inline h-4 w-4" />Concluir admissão</button>
-            </form>
-          </div>
-        </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-center justify-between border-b pb-3"><h3 className="font-bold">Admissão Manual</h3><button onClick={() => setShowFuncModal(false)}><X className="h-5 w-5" /></button></div><form onSubmit={handleCreateFuncionario} className="mt-4 space-y-3 text-xs"><input required value={nomeFunc} onChange={(e) => setNomeFunc(e.target.value)} placeholder="Nome completo" className="w-full rounded-xl border p-2.5" /><input required value={cpfFunc} onChange={(e) => setCpfFunc(e.target.value)} placeholder="CPF" className="w-full rounded-xl border p-2.5" /><input value={cargoFunc} onChange={(e) => setCargoFunc(e.target.value)} placeholder="Cargo" className="w-full rounded-xl border p-2.5" /><input value={departamentoFunc} onChange={(e) => setDepartamentoFunc(e.target.value)} placeholder="Departamento" className="w-full rounded-xl border p-2.5" /><input type="number" min="1" value={salarioFunc} onChange={(e) => setSalarioFunc(Number(e.target.value))} className="w-full rounded-xl border p-2.5" /><button className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 font-bold text-white"><ClipboardCheck className="mr-2 inline h-4 w-4" />Concluir admissão</button></form></div></div>
       )}
     </div>
   );
