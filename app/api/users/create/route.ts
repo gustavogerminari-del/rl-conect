@@ -5,6 +5,7 @@ const JSON_HEADERS = {
 
 const MASTER_ROLES = new Set(['MASTER', 'MASTER_ADMIN', 'SUPER_ADMINISTRADOR', 'SUPER ADMINISTRADOR']);
 const DEVELOPER_ROLES = new Set(['DEVELOPER', 'DEVELOPER_ADMIN', 'DESENVOLVEDOR']);
+const COMPANY_ADMIN_ROLES = new Set(['ADMIN_EMPRESA', 'ADMINISTRADOR_EMPRESA', 'EMPRESA_ADMIN', 'GESTOR_EMPRESA']);
 
 type ServiceAccount = {
   project_id: string;
@@ -13,12 +14,30 @@ type ServiceAccount = {
   token_uri?: string;
 };
 
-type FirestoreDocument = {
-  fields?: Record<string, any>;
+type FirestoreDocument = { fields?: Record<string, any> };
+
+type AuthAccount = {
+  uid: string;
+  idToken: string;
+  createdNewUser: boolean;
 };
 
 const normalizeRole = (value: unknown) =>
   String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+
+function canonicalTipoUsuario(role: string, requested?: unknown) {
+  if (MASTER_ROLES.has(role)) return 'MASTER';
+  if (DEVELOPER_ROLES.has(role)) return 'DEVELOPER';
+  if (COMPANY_ADMIN_ROLES.has(role)) return 'ADMIN_EMPRESA';
+  if (role === 'CANDIDATO') return 'CANDIDATO';
+  if (['FUNCIONARIO', 'COLABORADOR'].includes(role)) return 'FUNCIONARIO';
+
+  const normalizedRequested = normalizeRole(requested);
+  if (['ADMIN_EMPRESA', 'EMPRESA', 'CANDIDATO', 'FUNCIONARIO'].includes(normalizedRequested)) {
+    return normalizedRequested;
+  }
+  return 'EMPRESA';
+}
 
 function serviceAccountFromEnvironment(): ServiceAccount {
   const raw = String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
@@ -60,9 +79,9 @@ function firebaseApiKey() {
 }
 
 function base64Url(value: string | Uint8Array) {
-  const binary = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
   let raw = '';
-  binary.forEach((byte) => { raw += String.fromCharCode(byte); });
+  bytes.forEach((byte) => { raw += String.fromCharCode(byte); });
   return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
@@ -86,6 +105,7 @@ async function getGoogleAccessToken(serviceAccount: ServiceAccount) {
     exp: now + 3600,
   }));
   const unsigned = `${header}.${payload}`;
+
   const key = await crypto.subtle.importKey(
     'pkcs8',
     pemToPkcs8(serviceAccount.private_key),
@@ -98,14 +118,13 @@ async function getGoogleAccessToken(serviceAccount: ServiceAccount) {
     key,
     new TextEncoder().encode(unsigned)
   );
-  const assertion = `${unsigned}.${base64Url(new Uint8Array(signature))}`;
 
   const response = await fetch(tokenUri, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion,
+      assertion: `${unsigned}.${base64Url(new Uint8Array(signature))}`,
     }),
     signal: AbortSignal.timeout(15_000),
   });
@@ -147,12 +166,8 @@ function encodeFirestoreValue(value: any): any {
   if (typeof value === 'number') {
     return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
   }
-  if (Array.isArray(value)) {
-    return { arrayValue: { values: value.map(encodeFirestoreValue) } };
-  }
-  if (typeof value === 'object') {
-    return { mapValue: { fields: encodeFirestoreFields(value) } };
-  }
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeFirestoreValue) } };
+  if (typeof value === 'object') return { mapValue: { fields: encodeFirestoreFields(value) } };
   return { stringValue: String(value) };
 }
 
@@ -168,12 +183,7 @@ function firestoreDocumentUrl(projectId: string, collectionName: string, id: str
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${encodeURIComponent(collectionName)}/${encodeURIComponent(id)}`;
 }
 
-async function readFirestoreDocument(
-  projectId: string,
-  accessToken: string,
-  collectionName: string,
-  id: string
-): Promise<Record<string, any> | null> {
+async function readFirestoreDocument(projectId: string, accessToken: string, collectionName: string, id: string) {
   const response = await fetch(firestoreDocumentUrl(projectId, collectionName, id), {
     headers: { Authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(10_000),
@@ -185,9 +195,7 @@ async function readFirestoreDocument(
 
 async function resolveCompanyName(projectId: string, accessToken: string, companyId: string) {
   const company = await readFirestoreDocument(projectId, accessToken, 'empresas', companyId);
-  if (!company) {
-    throw Object.assign(new Error('A empresa vinculada ao usuário não existe.'), { status: 400 });
-  }
+  if (!company) throw Object.assign(new Error('A empresa vinculada ao usuário não existe.'), { status: 400 });
 
   const tenant = company.rawTenantData && typeof company.rawTenantData === 'object'
     ? company.rawTenantData
@@ -195,7 +203,6 @@ async function resolveCompanyName(projectId: string, accessToken: string, compan
   const companyName = String(
     tenant.companyName || tenant.nomeEmpresa || company.companyName || company.nomeEmpresa || company.nome || ''
   ).trim();
-
   if (!companyName) {
     throw Object.assign(new Error('A empresa selecionada não possui um nome válido.'), { status: 400 });
   }
@@ -209,8 +216,9 @@ async function patchFirestoreDocument(
   id: string,
   data: Record<string, any>
 ) {
-  const fields = Object.keys(data);
-  const mask = fields.map((field) => `updateMask.fieldPaths=${encodeURIComponent(field)}`).join('&');
+  const mask = Object.keys(data)
+    .map((field) => `updateMask.fieldPaths=${encodeURIComponent(field)}`)
+    .join('&');
   const response = await fetch(`${firestoreDocumentUrl(projectId, collectionName, id)}?${mask}`, {
     method: 'PATCH',
     headers: {
@@ -234,6 +242,20 @@ async function deleteFirestoreDocument(projectId: string, accessToken: string, c
   });
   if (response.status === 404 || response.ok) return;
   throw new Error(`Não foi possível reverter ${collectionName}/${id}.`);
+}
+
+async function restoreProfile(
+  projectId: string,
+  accessToken: string,
+  collectionName: string,
+  uid: string,
+  previous: Record<string, any> | null
+) {
+  if (previous) {
+    await patchFirestoreDocument(projectId, accessToken, collectionName, uid, previous);
+  } else {
+    await deleteFirestoreDocument(projectId, accessToken, collectionName, uid);
+  }
 }
 
 async function requireMaster(request: Request, projectId: string, accessToken: string, apiKey: string) {
@@ -272,13 +294,8 @@ async function identityRequest(apiKey: string, action: string, payload: Record<s
   return { response, body };
 }
 
-async function createOrReuseAuthUser(apiKey: string, email: string, password: string) {
-  const signup = await identityRequest(apiKey, 'signUp', {
-    email,
-    password,
-    returnSecureToken: true,
-  });
-
+async function createOrReuseAuthUser(apiKey: string, email: string, password: string): Promise<AuthAccount> {
+  const signup = await identityRequest(apiKey, 'signUp', { email, password, returnSecureToken: true });
   if (signup.response.ok && signup.body.localId && signup.body.idToken) {
     return {
       uid: String(signup.body.localId),
@@ -292,11 +309,7 @@ async function createOrReuseAuthUser(apiKey: string, email: string, password: st
     throw new Error(`Firebase Authentication recusou a criação do usuário: ${signupMessage || signup.response.status}.`);
   }
 
-  const signin = await identityRequest(apiKey, 'signInWithPassword', {
-    email,
-    password,
-    returnSecureToken: true,
-  });
+  const signin = await identityRequest(apiKey, 'signInWithPassword', { email, password, returnSecureToken: true });
   if (!signin.response.ok || !signin.body.localId || !signin.body.idToken) {
     const signinMessage = String(signin.body?.error?.message || '');
     if (/INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS/i.test(signinMessage)) {
@@ -313,29 +326,25 @@ async function createOrReuseAuthUser(apiKey: string, email: string, password: st
 }
 
 async function updateAuthDisplayName(apiKey: string, idToken: string, displayName: string) {
-  const update = await identityRequest(apiKey, 'update', {
-    idToken,
-    displayName,
-    returnSecureToken: true,
-  });
+  const update = await identityRequest(apiKey, 'update', { idToken, displayName, returnSecureToken: true });
   if (!update.response.ok) {
     const message = String(update.body?.error?.message || update.response.status);
-    throw new Error(`A conta foi criada, mas o nome no Firebase Authentication não pôde ser atualizado: ${message}.`);
+    throw new Error(`O perfil foi persistido, mas o nome no Firebase Authentication não pôde ser atualizado: ${message}.`);
   }
 }
 
 async function deleteAuthUser(apiKey: string, idToken: string) {
   const result = await identityRequest(apiKey, 'delete', { idToken });
-  if (!result.response.ok) {
-    throw new Error('Não foi possível reverter a conta criada no Firebase Authentication.');
-  }
+  if (!result.response.ok) throw new Error('Não foi possível reverter a conta criada no Firebase Authentication.');
 }
 
 export async function POST(request: Request) {
-  let createdAccount: { uid: string; idToken: string; createdNewUser: boolean } | null = null;
+  let createdAccount: AuthAccount | null = null;
   let projectId = '';
   let accessToken = '';
   let apiKey = '';
+  let previousPrimary: Record<string, any> | null = null;
+  let previousLegacy: Record<string, any> | null = null;
 
   try {
     const serviceAccount = serviceAccountFromEnvironment();
@@ -367,13 +376,15 @@ export async function POST(request: Request) {
     }
 
     const companyName = isPlatformUser ? '' : await resolveCompanyName(projectId, accessToken, companyId);
-
     createdAccount = await createOrReuseAuthUser(apiKey, email, password);
-    await updateAuthDisplayName(apiKey, createdAccount.idToken, displayName);
+
+    previousPrimary = await readFirestoreDocument(projectId, accessToken, 'usuarios', createdAccount.uid);
+    previousLegacy = await readFirestoreDocument(projectId, accessToken, 'users', createdAccount.uid);
 
     const now = new Date().toISOString();
     const canonicalRole = isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER_ADMIN' : rawRole;
     const empresaId = isPlatformUser ? null : companyId;
+    const tipoUsuario = canonicalTipoUsuario(role, body.tipoUsuario);
     const profile = {
       uid: createdAccount.uid,
       email,
@@ -381,7 +392,7 @@ export async function POST(request: Request) {
       displayName,
       role: canonicalRole,
       perfil: canonicalRole,
-      tipoUsuario: isMaster ? 'MASTER' : isDeveloper ? 'DEVELOPER' : 'EMPRESA',
+      tipoUsuario,
       ativo,
       status: ativo ? 'Ativo' : 'Inativo',
       empresaId,
@@ -392,19 +403,20 @@ export async function POST(request: Request) {
       permissoes: permissions,
       modules,
       modulos: modules,
-      createdAt: now,
+      createdAt: previousPrimary?.createdAt || previousLegacy?.createdAt || now,
       updatedAt: now,
-      createdBy: caller.uid,
+      createdBy: previousPrimary?.createdBy || previousLegacy?.createdBy || caller.uid,
       updatedBy: caller.uid,
     };
 
     try {
       await patchFirestoreDocument(projectId, accessToken, 'usuarios', createdAccount.uid, profile);
       await patchFirestoreDocument(projectId, accessToken, 'users', createdAccount.uid, profile);
+      await updateAuthDisplayName(apiKey, createdAccount.idToken, displayName);
     } catch (writeError) {
       await Promise.allSettled([
-        deleteFirestoreDocument(projectId, accessToken, 'usuarios', createdAccount.uid),
-        deleteFirestoreDocument(projectId, accessToken, 'users', createdAccount.uid),
+        restoreProfile(projectId, accessToken, 'usuarios', createdAccount.uid, previousPrimary),
+        restoreProfile(projectId, accessToken, 'users', createdAccount.uid, previousLegacy),
       ]);
       if (createdAccount.createdNewUser) {
         await deleteAuthUser(apiKey, createdAccount.idToken).catch(() => undefined);
@@ -415,6 +427,8 @@ export async function POST(request: Request) {
     return Response.json({
       success: true,
       uid: createdAccount.uid,
+      role: canonicalRole,
+      tipoUsuario,
       reusedExistingAuthAccount: !createdAccount.createdNewUser,
     }, { status: createdAccount.createdNewUser ? 201 : 200, headers: JSON_HEADERS });
   } catch (error: any) {
