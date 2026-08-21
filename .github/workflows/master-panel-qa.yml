@@ -4,15 +4,74 @@ on:
   push:
     branches:
       - codex/area-programador-v55
+      - codex/remove-n8n-rh-mil
     paths:
+      - 'src/main.tsx'
+      - 'src/App.tsx'
+      - 'src/auth/**'
+      - 'src/components/Header.tsx'
+      - 'src/components/Sidebar.tsx'
+      - 'src/components/FirebaseLoginView.tsx'
+      - 'src/components/views/AgendaView.tsx'
+      - 'src/developer/**'
+      - 'src/lib/firebase.ts'
+      - 'src/lib/firestoreServices.ts'
+      - 'src/lib/firestoreUtils.ts'
+      - 'src/lib/tenant.ts'
       - 'src/master-admin/**'
+      - 'src/services/AuditService.ts'
       - 'src/services/ModuleCatalogService.ts'
+      - 'src/services/businessRules.ts'
+      - 'src/services/dataService.ts'
+      - 'src/services/firebaseSessionService.ts'
+      - 'src/services/firebaseStateBridge.ts'
+      - 'src/services/interviewService.ts'
+      - 'app/api/workflows/**'
+      - 'app/api/users/create/**'
       - 'tests/master-*.test.mjs'
+      - 'tests/workflow-engine.test.mjs'
+      - 'tests/users-create-server.test.mjs'
+      - 'tests/interview-flow.test.mjs'
+      - 'tests/tenant-firebase-architecture.test.mjs'
+      - 'tests/hiring-flow-rules.test.ts'
       - 'scripts/build-verified.sh'
       - 'scripts/sites-env.sh'
       - 'scripts/validate-artifact.sh'
       - 'scripts/generate-source-catalog.mjs'
       - 'package.json'
+      - '.github/workflows/master-panel-qa.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/main.tsx'
+      - 'src/App.tsx'
+      - 'src/auth/**'
+      - 'src/components/Header.tsx'
+      - 'src/components/Sidebar.tsx'
+      - 'src/components/FirebaseLoginView.tsx'
+      - 'src/components/views/AgendaView.tsx'
+      - 'src/developer/**'
+      - 'src/lib/firebase.ts'
+      - 'src/lib/firestoreServices.ts'
+      - 'src/lib/firestoreUtils.ts'
+      - 'src/lib/tenant.ts'
+      - 'src/master-admin/**'
+      - 'src/services/AuditService.ts'
+      - 'src/services/businessRules.ts'
+      - 'src/services/dataService.ts'
+      - 'src/services/firebaseSessionService.ts'
+      - 'src/services/firebaseStateBridge.ts'
+      - 'src/services/interviewService.ts'
+      - 'app/api/workflows/**'
+      - 'app/api/users/create/**'
+      - 'tests/workflow-engine.test.mjs'
+      - 'tests/users-create-server.test.mjs'
+      - 'tests/interview-flow.test.mjs'
+      - 'tests/tenant-firebase-architecture.test.mjs'
+      - 'tests/hiring-flow-rules.test.ts'
+      - '.env.example'
+      - 'docs/N8N_REMOVAL_MIGRATION.md'
       - '.github/workflows/master-panel-qa.yml'
   workflow_dispatch:
 
@@ -31,5 +90,9 @@ jobs:
         run: npm install --legacy-peer-deps --no-audit --no-fund
       - name: Master regression tests
         run: node --test --test-force-exit tests/master-panel-official.test.mjs tests/master-access-protection.test.mjs tests/master-client-editing.test.mjs
+      - name: Workflow migration regression tests
+        run: node --test --test-force-exit tests/workflow-engine.test.mjs tests/users-create-server.test.mjs tests/interview-flow.test.mjs tests/tenant-firebase-architecture.test.mjs
+      - name: Hiring flow rules tests
+        run: node --import tsx --test tests/hiring-flow-rules.test.ts
       - name: Build
         run: npm run build
