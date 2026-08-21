@@ -17,6 +17,15 @@ on:
       - 'scripts/generate-source-catalog.mjs'
       - 'package.json'
       - '.github/workflows/master-panel-qa.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'app/api/workflows/**'
+      - 'tests/workflow-engine.test.mjs'
+      - '.env.example'
+      - 'docs/N8N_REMOVAL_MIGRATION.md'
+      - '.github/workflows/master-panel-qa.yml'
   workflow_dispatch:
 
 jobs:
