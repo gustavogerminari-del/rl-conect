@@ -9,8 +9,10 @@ on:
       - 'src/master-admin/**'
       - 'src/services/ModuleCatalogService.ts'
       - 'app/api/workflows/**'
+      - 'app/api/users/create/**'
       - 'tests/master-*.test.mjs'
       - 'tests/workflow-engine.test.mjs'
+      - 'tests/users-create-server.test.mjs'
       - 'scripts/build-verified.sh'
       - 'scripts/sites-env.sh'
       - 'scripts/validate-artifact.sh'
@@ -22,7 +24,9 @@ on:
       - main
     paths:
       - 'app/api/workflows/**'
+      - 'app/api/users/create/**'
       - 'tests/workflow-engine.test.mjs'
+      - 'tests/users-create-server.test.mjs'
       - '.env.example'
       - 'docs/N8N_REMOVAL_MIGRATION.md'
       - '.github/workflows/master-panel-qa.yml'
@@ -44,6 +48,6 @@ jobs:
       - name: Master regression tests
         run: node --test --test-force-exit tests/master-panel-official.test.mjs tests/master-access-protection.test.mjs tests/master-client-editing.test.mjs
       - name: Workflow migration regression tests
-        run: node --test --test-force-exit tests/workflow-engine.test.mjs
+        run: node --test --test-force-exit tests/workflow-engine.test.mjs tests/users-create-server.test.mjs
       - name: Build
         run: npm run build
