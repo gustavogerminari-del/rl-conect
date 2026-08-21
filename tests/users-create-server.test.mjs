@@ -35,12 +35,23 @@ test('rota valida a empresa no Firestore e deriva companyName no servidor', asyn
   assert.doesNotMatch(route, /String\(body\.companyName/);
 });
 
-test('rota possui rollback quando a persistência do perfil falha', async () => {
+test('ADMIN_EMPRESA mantém tipoUsuario compatível no backend', async () => {
   const route = await read('app/api/users/create/route.ts');
+  assert.match(route, /COMPANY_ADMIN_ROLES/);
+  assert.match(route, /return 'ADMIN_EMPRESA'/);
+  assert.match(route, /const tipoUsuario = canonicalTipoUsuario\(role, body\.tipoUsuario\)/);
+  assert.match(route, /tipoUsuario,/);
+});
+
+test('rollback restaura perfis antigos quando a conta Auth já existia', async () => {
+  const route = await read('app/api/users/create/route.ts');
+  assert.match(route, /previousPrimary/);
+  assert.match(route, /previousLegacy/);
+  assert.match(route, /restoreProfile/);
   assert.match(route, /Promise\.allSettled/);
-  assert.match(route, /deleteFirestoreDocument/);
+  assert.match(route, /if \(previous\)/);
+  assert.match(route, /createdAccount\.createdNewUser/);
   assert.match(route, /deleteAuthUser/);
-  assert.match(route, /createdNewUser/);
 });
 
 test('rota preserva compatibilidade com conta Auth existente', async () => {
