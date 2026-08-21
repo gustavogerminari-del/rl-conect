@@ -1,3 +1,6 @@
+import { firebaseStateBridge } from './firebaseStateBridge';
+import { firebaseSessionService, normalizeRlRole } from './firebaseSessionService';
+import { calculateHeadhunterFee, normalizeDocument, normalizeEmail, resolveHiringDestination, stableEntityId, isValidCpfForAdmission } from './businessRules';
 import {
   Empresa,
   Usuario,
@@ -25,26 +28,9 @@ import {
   StructuredAIResponse,
 } from '../types';
 
-// Storage keys for persistent state
-const STORAGE_PREFIX = 'rl_connect_v2_';
-
-function loadFromStorage<T>(key: string, defaultValue: T): T {
-  try {
-    const saved = localStorage.getItem(STORAGE_PREFIX + key);
-    if (saved) return JSON.parse(saved);
-  } catch (err) {
-    console.error('Error loading from storage:', err);
-  }
-  return defaultValue;
-}
-
-function saveToStorage<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
-  } catch (err) {
-    console.error('Error saving to storage:', err);
-  }
-}
+// Firebase é a única camada de persistência. Os arrays iniciais são apenas placeholders até a hidratação do Firestore.
+function loadFromStorage<T>(_key:string, defaultValue:T):T{return defaultValue;}
+function saveToStorage<T>(_key:string,_value:T):void{}
 
 // Initial Seed Data
 const initialEmpresas: Empresa[] = [
@@ -196,7 +182,7 @@ const initialVagas: Vaga[] = [
     salario_max: 18000,
     exibir_salario: true,
     status: 'publicada',
-    requisitos: ['TypeScript / Node.js 4+ anos', 'React 18+ com Tailwind CSS', 'PostgreSQL / Supabase', 'Arquitetura de microsserviços e APIs REST'],
+    requisitos: ['TypeScript / Node.js 4+ anos', 'React 18+ com Tailwind CSS', 'Firestore / Firebase', 'Arquitetura de microsserviços e APIs REST'],
     diferenciais: ['Experiência com Next.js / Cloud Run', 'Conhecimento em Docker e CI/CD'],
     beneficios: ['Vale Refeição R$ 1.200/mês', 'Plano de Saúde Bradesco Top', 'Auxílio Home Office R$ 400', 'Seguro de Vida'],
     publicado: true,
@@ -386,11 +372,10 @@ const initialEntrevistas: Entrevista[] = [
     data_hora: '2026-08-07T14:00:00Z',
     duracao_minutos: 60,
     formato: 'Online - Google Meet',
-    link_reuniao: 'https://meet.google.com/abc-defg-hij',
     entrevistador_id: 'usr_gestor_1',
     status: 'agendada',
     anotacoes: 'Focar na arquitetura de microservices e testes de banco PostgreSQL.',
-    sincronizado_gcal: true,
+    sincronizado_gcal: false,
     criado_em: '2026-08-04T16:00:00Z',
   },
   {
@@ -403,10 +388,9 @@ const initialEntrevistas: Entrevista[] = [
     data_hora: '2026-08-08T10:00:00Z',
     duracao_minutos: 45,
     formato: 'Online - Google Meet',
-    link_reuniao: 'https://meet.google.com/xyz-uvwx-rst',
     entrevistador_id: 'usr_admin_1',
     status: 'agendada',
-    sincronizado_gcal: true,
+    sincronizado_gcal: false,
     criado_em: '2026-08-02T14:10:00Z',
   },
 ];
@@ -515,7 +499,7 @@ const initialLogs: LogAuditoria[] = [
     usuario_id: 'usr_admin_1',
     usuario_nome: 'Carlos Silva',
     acao: 'LOGIN',
-    detalhes: 'Sessão iniciada via Supabase Auth com sucesso.',
+    detalhes: 'Sessão iniciada via Firebase Auth com sucesso.',
     ip: '189.120.45.12',
     resultado: 'SUCESSO',
     criado_em: '2026-08-06T08:30:00Z',
@@ -747,6 +731,8 @@ class DataService {
   private empresaModulos: EmpresaModulo[] = loadFromStorage('empresaModulos', initialEmpresaModulos);
   private assinaturas: Assinatura[] = loadFromStorage('assinaturas', initialAssinaturas);
   private pagamentos: Pagamento[] = loadFromStorage('pagamentos', initialPagamentos);
+  private admissoesPendentes: any[] = [];
+  private cobrancasHeadhunter: any[] = [];
 
   // Master AI Builder Stores
   private ollamaSettings: OllamaSettings = loadFromStorage('ollamaSettings', initialOllamaSettings);
@@ -755,41 +741,46 @@ class DataService {
   private aiLogs: AILogExecution[] = loadFromStorage('aiLogs', initialAILogs);
 
   // Active Session State
-  private currentUserId: string = loadFromStorage('currentUserId', 'usr_admin_1');
-  private activeEmpresaId: string = loadFromStorage('activeEmpresaId', 'emp_1');
+  private currentUserId: string = '';
+  private activeEmpresaId: string = '';
 
   private listeners: Set<() => void> = new Set();
+  private firebaseReady = false;
+  private firebaseAuthenticated = false;
+  private firebaseError: string | null = null;
+
+  constructor() {
+    firebaseSessionService.subscribe(async (session, error) => {
+      this.firebaseError = error || null;
+      if (!session) { this.firebaseAuthenticated=false; this.firebaseReady=true; this.listeners.forEach(fn=>fn()); return; }
+      this.firebaseReady=false; this.firebaseAuthenticated=true;
+      const profile:any={...session.profile,id:session.firebaseUser.uid,role:normalizeRlRole(session.profile.role||session.profile.tipoUsuario) as UserRole,empresa_id:session.companyId};
+      this.currentUserId=profile.id; this.activeEmpresaId=profile.empresa_id;
+      try { await this.hydrateTenantFromFirebase(profile.empresa_id,profile); this.firebaseError=null; }
+      catch(e){ this.firebaseError=e instanceof Error?e.message:String(e); }
+      finally { this.firebaseReady=true; this.listeners.forEach(fn=>fn()); }
+    });
+  }
+  private async hydrateTenantFromFirebase(companyId:string,profile?:any){
+    const state:any=await firebaseStateBridge.loadTenantState(companyId);
+    this.empresas=state.empresas||[];this.usuarios=state.usuarios||[];if(profile&&!this.usuarios.some(u=>u.id===profile.id))this.usuarios.push(profile as Usuario);
+    this.vagas=state.vagas||[];this.candidatos=state.candidatos||[];this.candidaturas=state.candidaturas||[];this.entrevistas=state.entrevistas||[];this.clientes=state.clientes||[];this.funcionarios=state.funcionarios||[];this.registroPontos=state.registroPontos||[];this.ferias=state.ferias||[];this.departamentos=state.departamentos||[];this.cargos=state.cargos||[];this.logs=state.logs||[];this.notificacoes=state.notificacoes||[];this.empresaModulos=state.empresaModulos||[];this.assinaturas=state.assinaturas||[];this.pagamentos=state.pagamentos||[];this.admissoesPendentes=state.admissoesPendentes||[];this.cobrancasHeadhunter=state.cobrancasHeadhunter||[];
+    this.builderModules=state.builderModules||[];this.builderVersions=state.builderVersions||[];this.aiLogs=state.aiLogs||[];const aiSettingsRow=(state.aiSettings||[])[0];if(aiSettingsRow)this.ollamaSettings={...this.ollamaSettings,...aiSettingsRow};
+  }
+  public getFirebaseStatus(){return{ready:this.firebaseReady,authenticated:this.firebaseAuthenticated,error:this.firebaseError};}
+  public loginFirebase(email:string,password:string){return firebaseSessionService.login(email,password);}
+  public logoutFirebase(){return firebaseSessionService.logout();}
+  public async loadPublicPortalFirebase(companyId:string){const s=await firebaseStateBridge.loadPublicPortal(companyId);this.activeEmpresaId=companyId;this.empresas=s.empresa?[s.empresa as Empresa]:[];this.vagas=s.vagas as Vaga[];this.listeners.forEach(fn=>fn());}
 
   public subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  private notify(): void {
-    this.saveAll();
-    this.listeners.forEach((fn) => fn());
-  }
-
+  private notify(): void { this.saveAll(); this.listeners.forEach(fn=>fn()); }
   private saveAll(): void {
-    saveToStorage('empresas', this.empresas);
-    saveToStorage('usuarios', this.usuarios);
-    saveToStorage('vagas', this.vagas);
-    saveToStorage('candidatos', this.candidatos);
-    saveToStorage('candidaturas', this.candidaturas);
-    saveToStorage('entrevistas', this.entrevistas);
-    saveToStorage('clientes', this.clientes);
-    saveToStorage('funcionarios', this.funcionarios);
-    saveToStorage('registroPontos', this.registroPontos);
-    saveToStorage('ferias', this.ferias);
-    saveToStorage('departamentos', this.departamentos);
-    saveToStorage('cargos', this.cargos);
-    saveToStorage('logs', this.logs);
-    saveToStorage('notificacoes', this.notificacoes);
-    saveToStorage('empresaModulos', this.empresaModulos);
-    saveToStorage('assinaturas', this.assinaturas);
-    saveToStorage('pagamentos', this.pagamentos);
-    saveToStorage('currentUserId', this.currentUserId);
-    saveToStorage('activeEmpresaId', this.activeEmpresaId);
+    if(!this.firebaseReady||!this.firebaseAuthenticated||!this.activeEmpresaId)return;
+    void firebaseStateBridge.persistTenantState(this.activeEmpresaId,{empresas:this.empresas,usuarios:this.usuarios,vagas:this.vagas,candidatos:this.candidatos,candidaturas:this.candidaturas,entrevistas:this.entrevistas,clientes:this.clientes,funcionarios:this.funcionarios,registroPontos:this.registroPontos,ferias:this.ferias,departamentos:this.departamentos,cargos:this.cargos,logs:this.logs,notificacoes:this.notificacoes,empresaModulos:this.empresaModulos,assinaturas:this.assinaturas,pagamentos:this.pagamentos,admissoesPendentes:this.admissoesPendentes,cobrancasHeadhunter:this.cobrancasHeadhunter,builderModules:this.builderModules.map(x=>({...x,empresa_id:(x as any).empresa_id||this.activeEmpresaId})),builderVersions:this.builderVersions.map(x=>({...x,empresa_id:(x as any).empresa_id||this.activeEmpresaId})),aiLogs:this.aiLogs.map(x=>({...x,empresa_id:(x as any).empresa_id||this.activeEmpresaId})),aiSettings:[{...this.ollamaSettings,id:'master_ai_settings',empresa_id:this.activeEmpresaId}]}).catch(error=>{console.error('[Firestore] Falha ao persistir estado.',error);this.firebaseError=error instanceof Error?error.message:String(error);this.listeners.forEach(fn=>fn());});
   }
 
   // --- Session & Multi-Tenant Helpers ---
@@ -800,15 +791,7 @@ class DataService {
     );
   }
 
-  public setCurrentUser(id: string): void {
-    const user = this.usuarios.find((u) => u.id === id);
-    if (user) {
-      this.currentUserId = user.id;
-      this.activeEmpresaId = user.empresa_id;
-      this.addLog('LOGIN', `Sessão alterada para ${user.nome} (${user.role})`);
-      this.notify();
-    }
-  }
+  public setCurrentUser(_id: string): void { console.warn('[Firebase Auth] Troca local de usuário bloqueada.'); }
 
   public getActiveEmpresa(): Empresa {
     return (
@@ -852,9 +835,12 @@ class DataService {
   }
 
   public createEmpresa(data: Omit<Empresa, 'id' | 'criado_em'>): Empresa {
+    const document = normalizeDocument(data.cnpj);
+    const existing = document ? this.empresas.find(e => normalizeDocument(e.cnpj) === document) : undefined;
+    if (existing) { Object.assign(existing, { ...data, id: existing.id, criado_em: existing.criado_em }); this.addLog('EDICAO', `Empresa ${existing.nome} reutilizada por CNPJ.`); this.notify(); return existing; }
     const newEmp: Empresa = {
       ...data,
-      id: 'emp_' + Date.now(),
+      id: stableEntityId('emp', document || `${data.nome}:${Date.now()}`),
       criado_em: new Date().toISOString(),
     };
     this.empresas.push(newEmp);
@@ -862,7 +848,7 @@ class DataService {
     // Initialize modules for new empresa
     initialModulos.forEach((m) => {
       this.empresaModulos.push({
-        id: 'em_' + Date.now() + '_' + m.chave,
+        id: stableEntityId('em', `${newEmp.id}:${m.id}`),
         empresa_id: newEmp.id,
         modulo_id: m.id,
         ativo: true,
@@ -889,7 +875,7 @@ class DataService {
       );
       return {
         modulo: mod,
-        ativo: em ? em.ativo : true,
+        ativo: em ? em.ativo : false,
       };
     });
   }
@@ -902,7 +888,7 @@ class DataService {
       this.empresaModulos[index].ativo = ativo;
     } else {
       this.empresaModulos.push({
-        id: 'em_' + Date.now(),
+        id: stableEntityId('em', `${empresaId}:${moduloId}`),
         empresa_id: empresaId,
         modulo_id: moduloId,
         ativo,
@@ -934,10 +920,25 @@ class DataService {
   }
 
   public createVaga(data: Omit<Vaga, 'id' | 'criado_em' | 'empresa_id'>): Vaga {
-    const user = this.getCurrentUser();
+    const titleKey = String(data.titulo || '').trim().toLowerCase();
+    const originKey = data.modulo_origem || 'recrutamento';
+    const clientKey = data.cliente_id || '';
+    const existing = this.vagas.find(v =>
+      v.empresa_id === this.activeEmpresaId &&
+      String(v.titulo || '').trim().toLowerCase() === titleKey &&
+      (v.modulo_origem || 'recrutamento') === originKey &&
+      (v.cliente_id || '') === clientKey &&
+      v.status !== 'encerrada'
+    );
+    if (existing) {
+      Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em });
+      this.addLog('EDICAO', `Vaga "${existing.titulo}" reutilizada; duplicidade evitada.`);
+      this.notify();
+      return existing;
+    }
     const newVaga: Vaga = {
       ...data,
-      id: 'vaga_' + Date.now(),
+      id: stableEntityId('vaga', `${this.activeEmpresaId}:${originKey}:${clientKey}:${titleKey}:${Date.now()}`),
       empresa_id: this.activeEmpresaId,
       criado_em: new Date().toISOString(),
     };
@@ -977,15 +978,11 @@ class DataService {
   }
 
   public createCandidato(data: Omit<Candidato, 'id' | 'criado_em' | 'empresa_id'>): Candidato {
-    const newCand: Candidato = {
-      ...data,
-      id: 'cand_' + Date.now(),
-      empresa_id: this.activeEmpresaId,
-      criado_em: new Date().toISOString(),
-    };
-    this.candidatos.unshift(newCand);
-    this.notify();
-    return newCand;
+    const email = normalizeEmail(data.email);
+    const existing = this.candidatos.find(c => c.empresa_id === this.activeEmpresaId && normalizeEmail(c.email) === email);
+    if (existing) { Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em }); this.addLog('EDICAO', `Candidato ${existing.nome} reutilizado por e-mail.`); this.notify(); return existing; }
+    const newCand: Candidato = { ...data, id: stableEntityId('cand', `${this.activeEmpresaId}:${email}`), empresa_id: this.activeEmpresaId, criado_em: new Date().toISOString() };
+    this.candidatos.unshift(newCand); this.notify(); return newCand;
   }
 
   public getCandidaturas(): Candidatura[] {
@@ -1016,13 +1013,40 @@ class DataService {
   }
 
   public moveCandidaturaEtapa(candidaturaId: string, novaEtapa: Candidatura['etapa_pipeline']): void {
-    const candApp = this.candidaturas.find((c) => c.id === candidaturaId);
-    if (candApp) {
-      candApp.etapa_pipeline = novaEtapa;
-      candApp.atualizado_em = new Date().toISOString();
-      this.addLog('EDICAO', `Candidatura ID ${candidaturaId} movida para etapa "${novaEtapa}".`);
-      this.notify();
+    const candApp = this.candidaturas.find(c => c.id === candidaturaId);
+    if (!candApp) return;
+    candApp.etapa_pipeline = novaEtapa;
+    candApp.atualizado_em = new Date().toISOString();
+    if (novaEtapa === 'Contratado') {
+      candApp.status = 'aprovado';
+      const vaga = this.vagas.find(v => v.id === candApp.vaga_id);
+      const candidato = this.candidatos.find(c => c.id === candApp.candidato_id);
+      if (vaga && candidato) {
+        const destination = resolveHiringDestination(vaga.modulo_origem);
+        if (destination === 'ADMISSION') {
+          const id = stableEntityId('adm', `${candApp.empresa_id}:${candApp.id}`);
+          if (!this.admissoesPendentes.some(a => a.id === id)) this.admissoesPendentes.unshift({
+            id, empresa_id: candApp.empresa_id, candidatura_id: candApp.id, vaga_id: vaga.id, candidato_id: candidato.id,
+            candidato_nome: candidato.nome, candidato_email: candidato.email, cargo: vaga.cargo || vaga.titulo,
+            departamento: vaga.departamento || 'Geral', salario_sugerido: vaga.salario_min || vaga.salario_max || 0,
+            status: 'PENDENTE_DOCUMENTOS', destination, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString(),
+          });
+          this.addLog('CRIACAO', `Contratação ${candApp.id} encaminhada para ADMISSION/DP.`);
+        } else {
+          const id = stableEntityId('cob', `${candApp.empresa_id}:${candApp.id}`);
+          if (!this.cobrancasHeadhunter.some(c => c.id === id)) {
+            const salario = vaga.salario_min || vaga.salario_max || 0;
+            const valor = calculateHeadhunterFee(salario, vaga.honorario_headhunter);
+            this.cobrancasHeadhunter.unshift({ id, empresa_id: candApp.empresa_id, candidatura_id: candApp.id, vaga_id: vaga.id,
+              candidato_id: candidato.id, candidato_nome: candidato.nome, cliente_id: vaga.cliente_id, salario_base: salario,
+              regra_fee: vaga.honorario_headhunter || '', valor, status: valor && valor > 0 ? 'AGUARDANDO_COBRANCA' : 'PENDENTE_DADOS_COMERCIAIS',
+              destination, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString() });
+          }
+          this.addLog('CRIACAO', `Contratação ${candApp.id} encaminhada para FINANCEIRO_HEADHUNTER.`);
+        }
+      }
     }
+    this.addLog('EDICAO', `Candidatura ID ${candidaturaId} movida para etapa "${novaEtapa}".`); this.notify();
   }
 
   public applyToVagaPublic(
@@ -1042,7 +1066,7 @@ class DataService {
     if (!cand) {
       cand = {
         ...candidateData,
-        id: 'cand_' + Date.now(),
+        id: stableEntityId('cand', `${empresaTargetId}:${normalizeEmail(candidateData.email)}`),
         empresa_id: empresaTargetId,
         origem: 'portal_vagas',
         criado_em: new Date().toISOString(),
@@ -1061,9 +1085,11 @@ class DataService {
       if (candidateData.observacoes) cand.observacoes = candidateData.observacoes;
     }
 
-    // RULE 7: Create candidature with empresa_id, vaga_id, candidato_id, origem = 'portal_vagas'
+    const existingApplication = this.candidaturas.find(c => c.empresa_id === empresaTargetId && c.vaga_id === vagaId && c.candidato_id === cand!.id);
+    if (existingApplication) { this.addLog('EDICAO', `Candidatura existente de ${cand.nome} reutilizada.`); this.notify(); return { candidato: cand, candidatura: existingApplication }; }
+    // One Firebase document per company + job + candidate.
     const candidatura: Candidatura = {
-      id: 'cand_app_' + Date.now(),
+      id: stableEntityId('cand_app', `${empresaTargetId}:${vagaId}:${cand.id}`),
       empresa_id: empresaTargetId,
       vaga_id: vagaId,
       candidato_id: cand.id,
@@ -1179,23 +1205,32 @@ class DataService {
     }
   }
 
+  // --- CONTRATAÇÃO / ADMISSÃO / FINANCEIRO HEADHUNTER ---
+  public getAdmissoesPendentes(): any[] { return this.filterByEmpresa(this.admissoesPendentes); }
+  public concluirAdmissao(admissaoId: string, cpf: string, salario?: number): Funcionario | null {
+    const adm = this.admissoesPendentes.find(a => a.id === admissaoId); if (!adm || adm.status === 'CONCLUIDA') return null;
+    const candidato = this.candidatos.find(c => c.id === adm.candidato_id); const salary = Number(salario || adm.salario_sugerido || 0);
+    if (!candidato || !isValidCpfForAdmission(cpf) || !(salary > 0)) return null;
+    const previousCompany = this.activeEmpresaId; this.activeEmpresaId = adm.empresa_id;
+    const funcionario = this.createFuncionario({ nome: candidato.nome, cpf: cpf.trim(), email: candidato.email, telefone: candidato.telefone, cargo: adm.cargo, departamento: adm.departamento, salario: salary, data_admissao: new Date().toISOString().slice(0,10), status: 'ativo' });
+    this.activeEmpresaId = previousCompany; adm.status = 'CONCLUIDA'; adm.funcionario_id = funcionario.id; adm.atualizado_em = new Date().toISOString(); this.notify(); return funcionario;
+  }
+  public getCobrancasHeadhunter(): any[] { return this.filterByEmpresa(this.cobrancasHeadhunter); }
+
   // --- ENTREVISTAS & AGENDA ---
   public getEntrevistas(): Entrevista[] {
     return this.filterByEmpresa(this.entrevistas);
   }
 
   public createEntrevista(data: Omit<Entrevista, 'id' | 'criado_em' | 'empresa_id'>): Entrevista {
-    const newEnt: Entrevista = {
-      ...data,
-      id: 'ent_' + Date.now(),
-      empresa_id: this.activeEmpresaId,
-      sincronizado_gcal: true,
-      criado_em: new Date().toISOString(),
-    };
-    this.entrevistas.unshift(newEnt);
-    this.addLog('CRIACAO', `Entrevista "${newEnt.titulo}" agendada.`);
-    this.notify();
-    return newEnt;
+    const existing = this.entrevistas.find(e => e.empresa_id === this.activeEmpresaId && e.candidatura_id === data.candidatura_id && e.data_hora === data.data_hora && e.status !== 'cancelada');
+    if (existing) return existing;
+    const newEnt: Entrevista = { ...data, id: stableEntityId('ent', `${this.activeEmpresaId}:${data.candidatura_id}:${data.data_hora}`), empresa_id: this.activeEmpresaId, sincronizado_gcal: Boolean(data.sincronizado_gcal && data.link_reuniao), criado_em: new Date().toISOString() };
+    this.entrevistas.unshift(newEnt); this.addLog('CRIACAO', `Entrevista "${newEnt.titulo}" agendada.`); this.notify(); return newEnt;
+  }
+  public updateEntrevista(id: string, updates: Partial<Entrevista>): Entrevista | null {
+    const interview = this.entrevistas.find(e => e.id === id); if (!interview) return null;
+    Object.assign(interview, updates, { id: interview.id, empresa_id: interview.empresa_id }); this.notify(); return interview;
   }
 
   // --- CLIENTES (HEADHUNTER) ---
@@ -1204,16 +1239,10 @@ class DataService {
   }
 
   public createCliente(data: Omit<Cliente, 'id' | 'criado_em' | 'empresa_id'>): Cliente {
-    const newCli: Cliente = {
-      ...data,
-      id: 'cli_' + Date.now(),
-      empresa_id: this.activeEmpresaId,
-      criado_em: new Date().toISOString(),
-    };
-    this.clientes.push(newCli);
-    this.addLog('CRIACAO', `Cliente Headhunter "${newCli.nome}" cadastrado.`);
-    this.notify();
-    return newCli;
+    const document = normalizeDocument(data.cnpj_cpf); const existing = document ? this.clientes.find(c => c.empresa_id === this.activeEmpresaId && normalizeDocument(c.cnpj_cpf) === document) : undefined;
+    if (existing) { Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em }); this.notify(); return existing; }
+    const newCli: Cliente = { ...data, id: stableEntityId('cli', `${this.activeEmpresaId}:${document || normalizeEmail(data.email)}`), empresa_id: this.activeEmpresaId, criado_em: new Date().toISOString() };
+    this.clientes.push(newCli); this.addLog('CRIACAO', `Cliente Headhunter "${newCli.nome}" cadastrado.`); this.notify(); return newCli;
   }
 
   // --- DEPARTAMENTO PESSOAL (FUNCIONÁRIOS, PONTO, FÉRIAS) ---
@@ -1222,6 +1251,9 @@ class DataService {
   }
 
   public createFuncionario(data: Partial<Funcionario> & { nome: string; cpf: string; email: string; salario: number }): Funcionario {
+    const cpfKey = normalizeDocument(data.cpf); const emailKey = normalizeEmail(data.email);
+    const existing = this.funcionarios.find(f => f.empresa_id === this.activeEmpresaId && ((cpfKey && normalizeDocument(f.cpf) === cpfKey) || (emailKey && normalizeEmail(f.email) === emailKey)));
+    if (existing) { Object.assign(existing, { ...data, id: existing.id, empresa_id: existing.empresa_id, criado_em: existing.criado_em }); this.notify(); return existing; }
     const newFunc: Funcionario = {
       cargo_id: 'cargo_1',
       cargo_nome: data.cargo || 'Analista',
@@ -1231,7 +1263,7 @@ class DataService {
       data_admissao: new Date().toISOString().split('T')[0],
       status: 'ativo',
       ...data,
-      id: 'func_' + Date.now(),
+      id: stableEntityId('func', `${this.activeEmpresaId}:${cpfKey || emailKey}`),
       empresa_id: this.activeEmpresaId,
       criado_em: new Date().toISOString(),
     };
@@ -1328,15 +1360,46 @@ class DataService {
   }
 
   public createUsuario(data: Omit<Usuario, 'id' | 'criado_em'>): Usuario {
+    const email = normalizeEmail(data.email);
+    if (!email) throw new Error('E-mail do usuário é obrigatório.');
+    const existing = this.usuarios.find(u => normalizeEmail(u.email) === email);
+    if (existing) {
+      if (existing.empresa_id && data.empresa_id && existing.empresa_id !== data.empresa_id) {
+        throw new Error('Este e-mail já pertence a outra empresa.');
+      }
+      Object.assign(existing, { ...data, id: existing.id, criado_em: existing.criado_em, email });
+      this.addLog('EDICAO', `Usuário ${existing.nome} (${existing.email}) reutilizado por e-mail.`);
+      this.notify();
+      return existing;
+    }
     const newUsr: Usuario = {
       ...data,
-      id: 'usr_' + Date.now(),
+      email,
+      id: stableEntityId('usr', email),
       criado_em: new Date().toISOString(),
     };
     this.usuarios.push(newUsr);
     this.addLog('CRIACAO', `Usuário ${newUsr.nome} (${newUsr.email}) criado.`);
     this.notify();
     return newUsr;
+  }
+
+  public async createFirebaseAccess(data: Omit<Usuario, 'id' | 'criado_em'>, password: string): Promise<Usuario> {
+    const token = await firebaseSessionService.idToken();
+    if (!token) throw new Error('Sessão Firebase obrigatória para criar acessos.');
+    const response = await fetch('/api/admin/users', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...data, companyId: data.empresa_id, password }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.user) throw new Error(result?.error || 'Não foi possível criar o acesso Firebase.');
+    const user = result.user as Usuario;
+    const local = this.usuarios.find(u => normalizeEmail(u.email) === normalizeEmail(user.email));
+    if (local) Object.assign(local, user);
+    else this.usuarios.push(user);
+    this.notify();
+    return user;
   }
 
   // --- CONSTRUTOR MASTER COM IA METHODS ---
@@ -1347,7 +1410,6 @@ class DataService {
 
   public updateOllamaSettings(data: Partial<OllamaSettings>): OllamaSettings {
     this.ollamaSettings = { ...this.ollamaSettings, ...data };
-    saveToStorage('ollamaSettings', this.ollamaSettings);
     this.notify();
     return this.ollamaSettings;
   }
@@ -1367,14 +1429,12 @@ class DataService {
     } else {
       this.builderModules.push({ ...mod, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString() });
     }
-    saveToStorage('builderModules', this.builderModules);
     this.notify();
     return mod;
   }
 
   public deleteBuilderModule(id: string): void {
     this.builderModules = this.builderModules.filter((m) => m.id !== id);
-    saveToStorage('builderModules', this.builderModules);
     this.addLog('EXCLUSAO', `Módulo dinâmico ${id} excluído do Construtor.`);
     this.notify();
   }
@@ -1413,7 +1473,6 @@ class DataService {
     this.saveBuilderModule(mod);
 
     this.builderVersions.unshift(version);
-    saveToStorage('builderVersions', this.builderVersions);
     this.addLog('CRIACAO', `Nova versão de módulo ${mod.nome} v${nextVer} registrada no ambiente ${ambiente}.`);
     this.notify();
     return version;
@@ -1429,7 +1488,6 @@ class DataService {
 
     // Update status of version items
     ver.status = 'restaurada';
-    saveToStorage('builderVersions', this.builderVersions);
 
     this.addLog('EDICAO', `Restaurada versão ${ver.versao} do módulo ${modConfig.nome}.`);
     this.notify();
@@ -1452,7 +1510,6 @@ class DataService {
       usuario_nome: user.nome,
     };
     this.aiLogs.unshift(newLog);
-    saveToStorage('aiLogs', this.aiLogs);
     this.notify();
     return newLog;
   }
@@ -1475,9 +1532,9 @@ class DataService {
       mod = { ...existing };
     } else {
       mod = {
-        id: 'mod_' + Date.now(),
+        id: stableEntityId('builder_mod', `${this.activeEmpresaId}:${res.module?.slug || res.module?.name || 'modulo_customizado'}`),
         nome: res.module?.name || 'Módulo Customizado IA',
-        slug: res.module?.slug || 'modulo_' + Date.now().toString(36),
+        slug: res.module?.slug || stableEntityId('modulo', res.module?.name || 'customizado'),
         descricao: res.module?.description || 'Gerado via Construtor Master IA',
         icone: res.module?.icon || 'sparkles',
         empresa_id: this.activeEmpresaId,
