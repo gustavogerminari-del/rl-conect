@@ -183,6 +183,25 @@ async function readFirestoreDocument(
   return decodeDocument(await response.json());
 }
 
+async function resolveCompanyName(projectId: string, accessToken: string, companyId: string) {
+  const company = await readFirestoreDocument(projectId, accessToken, 'empresas', companyId);
+  if (!company) {
+    throw Object.assign(new Error('A empresa vinculada ao usuário não existe.'), { status: 400 });
+  }
+
+  const tenant = company.rawTenantData && typeof company.rawTenantData === 'object'
+    ? company.rawTenantData
+    : company;
+  const companyName = String(
+    tenant.companyName || tenant.nomeEmpresa || company.companyName || company.nomeEmpresa || company.nome || ''
+  ).trim();
+
+  if (!companyName) {
+    throw Object.assign(new Error('A empresa selecionada não possui um nome válido.'), { status: 400 });
+  }
+  return companyName;
+}
+
 async function patchFirestoreDocument(
   projectId: string,
   accessToken: string,
@@ -335,7 +354,6 @@ export async function POST(request: Request) {
     const isDeveloper = DEVELOPER_ROLES.has(role);
     const isPlatformUser = isMaster || isDeveloper;
     const companyId = isPlatformUser ? '' : String(body.empresaId || body.companyId || '').trim();
-    const companyName = isPlatformUser ? '' : String(body.companyName || '').trim();
     const ativo = body.ativo !== false;
     const permissions = Array.isArray(body.permissions) ? body.permissions.map(String) : [];
     const modules = body.modules && typeof body.modules === 'object' && !Array.isArray(body.modules) ? body.modules : {};
@@ -344,9 +362,11 @@ export async function POST(request: Request) {
     if (!email || !displayName || password.length < 6) {
       return Response.json({ success: false, error: 'Nome, e-mail e senha temporária de pelo menos 6 caracteres são obrigatórios.' }, { status: 400, headers: JSON_HEADERS });
     }
-    if (!isPlatformUser && (!companyId || !companyName)) {
+    if (!isPlatformUser && !companyId) {
       return Response.json({ success: false, error: 'Empresa válida é obrigatória para criar um usuário comum.' }, { status: 400, headers: JSON_HEADERS });
     }
+
+    const companyName = isPlatformUser ? '' : await resolveCompanyName(projectId, accessToken, companyId);
 
     createdAccount = await createOrReuseAuthUser(apiKey, email, password);
     await updateAuthDisplayName(apiKey, createdAccount.idToken, displayName);
