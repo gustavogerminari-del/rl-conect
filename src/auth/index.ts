@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     logout: async () => { await signOut(auth); },
   }), [firebaseUser, user, isLoading]);
 
-  return <AuthRuntime.Provider value={value}>{children}</AuthRuntime.Provider>;
+  return React.createElement(AuthRuntime.Provider, { value }, children);
 }
 
 export function useAuth(): AuthRuntimeContext {
