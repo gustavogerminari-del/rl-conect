@@ -1,647 +1,320 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Crown,
-  Building2,
-  Plus,
-  Edit3,
-  Power,
-  ShieldCheck,
-  Package,
-  CreditCard,
-  Search,
-  Check,
-  X,
-  Database,
-  BarChart3,
   Activity,
+  Building2,
+  CheckCircle2,
+  Crown,
+  Database,
   Layers,
+  Package,
+  Plus,
+  Search,
+  ShieldCheck,
+  Users,
+  X,
 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
-import { Empresa, ModuloChave } from '../../types';
+import { Empresa } from '../../types';
+
+type MasterTab = 'visao-geral' | 'empresas' | 'usuarios' | 'modulos' | 'planos' | 'auditoria' | 'configuracoes';
 
 export const MasterAdminView: React.FC = () => {
-  const [empresas, setEmpresas] = useState(dataService.getEmpresas());
-  const [selectedEmpresa, setSelectedEmpresa] = useState<Empresa | null>(empresas[0] || null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [activeTab, setActiveTab] = useState<MasterTab>('visao-geral');
+  const [selectedEmpresaId, setSelectedEmpresaId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'empresas' | 'usuarios' | 'planos' | 'modulos' | 'relatorios' | 'configuracoes' | 'ia' | 'parceiros'>('dashboard');
-
-  // Form state
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [nomeForm, setNomeForm] = useState('');
   const [cnpjForm, setCnpjForm] = useState('');
   const [cidadeForm, setCidadeForm] = useState('');
-  const [estadoForm, setEstadoForm] = useState('');
+  const [estadoForm, setEstadoForm] = useState('PR');
+  const [formError, setFormError] = useState('');
 
-  const refreshData = () => {
-    setEmpresas(dataService.getEmpresas());
-  };
+  useEffect(() => dataService.subscribe(() => setRevision((value) => value + 1)), []);
 
-  const handleCreateEmpresa = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!nomeForm || !cnpjForm) return;
-
-    dataService.createEmpresa({
-      nome: nomeForm,
-      cnpj: cnpjForm,
-      logo_url: 'https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150&auto=format&fit=crop&q=80',
-      plano_id: 'pro',
-      status: 'ativa',
-      endereco: 'Av. Brasil, 100',
-      cidade: cidadeForm || 'São Paulo',
-      estado: estadoForm || 'SP',
-    });
-
-    setNomeForm('');
-    setCnpjForm('');
-    setCidadeForm('');
-    setEstadoForm('');
-    setShowCreateModal(false);
-    refreshData();
-  };
-
-  const handleToggleStatus = (id: string, currentStatus: Empresa['status']) => {
-    const nextStatus = currentStatus === 'ativa' ? 'suspensa' : 'ativa';
-    dataService.updateEmpresa(id, { status: nextStatus });
-    refreshData();
-  };
-
-  const filteredEmpresas = empresas.filter(
-    (e) =>
-      e.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.cnpj.includes(searchTerm)
-  );
-
-  const activeEmpresaModulos = selectedEmpresa
-    ? dataService.getEmpresaModulos(selectedEmpresa.id)
-    : [];
-
+  const currentUser = dataService.getCurrentUser();
+  const firebaseStatus = dataService.getFirebaseStatus();
+  const empresas = dataService.getEmpresas();
+  const usuarios = dataService.getAllUsuariosMaster();
   const planos = dataService.getPlanos();
+  const logs = dataService.getLogs();
+
+  useEffect(() => {
+    if (!selectedEmpresaId && empresas[0]?.id) setSelectedEmpresaId(empresas[0].id);
+  }, [revision, empresas, selectedEmpresaId]);
+
+  const selectedEmpresa = empresas.find((empresa) => empresa.id === selectedEmpresaId) || empresas[0] || null;
+  const modulosSelecionados = selectedEmpresa ? dataService.getEmpresaModulos(selectedEmpresa.id) : [];
+
+  const empresasFiltradas = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return empresas;
+    return empresas.filter((empresa) =>
+      empresa.nome.toLowerCase().includes(term) || empresa.cnpj.toLowerCase().includes(term),
+    );
+  }, [empresas, searchTerm]);
+
+  const usuariosAtivos = usuarios.filter((usuario) => usuario.status === 'ativo').length;
+  const empresasAtivas = empresas.filter((empresa) => empresa.status === 'ativa').length;
+  const modulosAtivos = modulosSelecionados.filter((item) => item.ativo).length;
+
+  if (!currentUser || currentUser.role !== 'master_admin') {
+    return (
+      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center">
+        <ShieldCheck className="mx-auto h-10 w-10 text-rose-600" />
+        <h2 className="mt-3 text-lg font-extrabold text-rose-900">Acesso restrito ao Master</h2>
+        <p className="mt-1 text-sm text-rose-700">Esta área exige uma sessão Firebase com perfil Master válido.</p>
+      </div>
+    );
+  }
+
+  const handleCreateEmpresa = (event: React.FormEvent) => {
+    event.preventDefault();
+    setFormError('');
+    if (!nomeForm.trim() || !cnpjForm.trim()) {
+      setFormError('Nome e CNPJ são obrigatórios.');
+      return;
+    }
+    try {
+      const empresa = dataService.createEmpresa({
+        nome: nomeForm.trim(),
+        cnpj: cnpjForm.trim(),
+        logo_url: '',
+        plano_id: planos[0]?.id || 'basico',
+        status: 'ativa',
+        endereco: '',
+        cidade: cidadeForm.trim(),
+        estado: estadoForm.trim().toUpperCase() || 'PR',
+      });
+      setSelectedEmpresaId(empresa.id);
+      setNomeForm('');
+      setCnpjForm('');
+      setCidadeForm('');
+      setEstadoForm('PR');
+      setShowCreateModal(false);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Não foi possível cadastrar a empresa.');
+    }
+  };
+
+  const tabs: Array<{ id: MasterTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+    { id: 'visao-geral', label: 'Visão Geral', icon: Activity },
+    { id: 'empresas', label: 'Empresas', icon: Building2 },
+    { id: 'usuarios', label: 'Usuários', icon: Users },
+    { id: 'modulos', label: 'Módulos', icon: Layers },
+    { id: 'planos', label: 'Planos', icon: Package },
+    { id: 'auditoria', label: 'Auditoria', icon: ShieldCheck },
+    { id: 'configuracoes', label: 'Configurações', icon: Database },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Top Banner - PAINEL EXCLUSIVO MASTER */}
-      <div className="relative overflow-hidden rounded-2xl bg-slate-950 p-6 text-white shadow-xl border border-slate-800">
-        <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 text-white shadow-xl">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20">
-              <Crown className="h-6 w-6 font-extrabold" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500 text-slate-950">
+              <Crown className="h-6 w-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-extrabold tracking-tight uppercase">PAINEL EXCLUSIVO MASTER</h1>
-                <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[10px] font-extrabold uppercase text-amber-400 border border-amber-500/30">
-                  PLATAFORMA MULTI-TENANT
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-slate-400">
-                Controle irrestrito do SaaS, faturamento, clientes e infraestrutura Supabase Cloud.
-              </p>
+              <h1 className="text-xl font-extrabold">Painel Master RL Connect</h1>
+              <p className="mt-1 text-xs text-slate-400">Administração real da plataforma usando Firebase Auth, Firestore e Storage.</p>
             </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-xs font-extrabold text-slate-950 transition hover:bg-amber-400 shadow-md shadow-amber-500/20"
-            >
-              <Plus className="h-4 w-4" />
-              Nova Empresa
-            </button>
-          </div>
-        </div>
-
-        {/* Info status bar */}
-        <div className="mt-4 pt-4 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px] text-slate-400">
-          <div>Supabase Auth: <span className="text-emerald-400 font-bold">Sim</span></div>
-          <div>UID: <span className="font-mono text-slate-300">sPB_8392104918234</span></div>
-          <div>E-mail: <span className="text-slate-200 font-medium">gustavo.germinari@gmail.com</span></div>
-          <div>Role: <span className="text-amber-400 font-bold">MASTER</span></div>
-        </div>
-      </div>
-
-      {/* Navigation Subtabs */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none border-b border-slate-200">
-        {[
-          { id: 'dashboard', label: 'Dashboard Master', icon: BarChart3 },
-          { id: 'empresas', label: 'Empresas Cadastradas', icon: Building2 },
-          { id: 'usuarios', label: 'Usuários e Permissões', icon: ShieldCheck },
-          { id: 'planos', label: 'Planos & SaaS', icon: Package },
-          { id: 'modulos', label: 'Módulos', icon: Layers },
-          { id: 'relatorios', label: 'Relatórios', icon: Activity },
-          { id: 'configuracoes', label: 'Configurações', icon: Database },
-          { id: 'ia', label: 'Inteligência Artificial', icon: Crown },
-          { id: 'parceiros', label: 'Parceiros & Vantagens', icon: CreditCard },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition whitespace-nowrap ${
-                isActive
-                  ? 'bg-amber-500 text-slate-950 shadow-sm font-extrabold'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* DASHBOARD MASTER TAB */}
-      {activeTab === 'dashboard' && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-extrabold text-slate-900">Visão Consolida da Plataforma</h2>
-              <p className="text-xs text-slate-500">Métricas globais do SaaS MAIS RH em tempo real</p>
-            </div>
-            <span className="rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1 text-xs font-bold">
-              ● SaaS Operacional • Supabase PostgreSQL
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className={`rounded-full border px-3 py-1 font-bold ${firebaseStatus.authenticated ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-rose-500/40 bg-rose-500/10 text-rose-300'}`}>
+              Firebase Auth: {firebaseStatus.authenticated ? 'Autenticado' : 'Não autenticado'}
             </span>
+            <span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-slate-300">{currentUser.email}</span>
           </div>
+        </div>
+      </div>
 
-          {/* Metric Cards Grid matching Screenshot 2 */}
+      <div className="flex gap-2 overflow-x-auto border-b border-slate-200 pb-2">
+        {tabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={`flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition ${activeTab === id ? 'bg-slate-950 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'visao-geral' && (
+        <div className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5 text-white shadow-md">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>MRR Total Ativo</span>
-                <span className="text-emerald-400 font-bold">$</span>
-              </div>
-              <div className="mt-2 text-2xl font-black text-white">R$ 2.580</div>
-              <p className="mt-1 text-[11px] text-emerald-400 font-semibold">↑ +14.2% em relação ao mês anterior</p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5 text-white shadow-md">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>ARR Projeção Anual</span>
-                <span className="text-amber-400 font-bold">📊</span>
-              </div>
-              <div className="mt-2 text-2xl font-black text-amber-400">R$ 30.960</div>
-              <p className="mt-1 text-[11px] text-slate-400">Contratos ativos multiplicados por 12</p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5 text-white shadow-md">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Empresas Clientes</span>
-                <span className="text-blue-400 font-bold">🏢</span>
-              </div>
-              <div className="mt-2 text-2xl font-black text-white">2 <span className="text-xs font-normal text-slate-400">/ 2 total</span></div>
-              <p className="mt-1 text-[11px] text-slate-400">0 pendentes de pagamento</p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5 text-white shadow-md">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Usuários e Colaboradores</span>
-                <span className="text-indigo-400 font-bold">👤</span>
-              </div>
-              <div className="mt-2 text-2xl font-black text-white">2 <span className="text-xs font-normal text-slate-400">usuários</span></div>
-              <p className="mt-1 text-[11px] text-blue-400 font-semibold">1850 colaboradores no DP/Ponto</p>
-            </div>
+            <MetricCard title="Empresas cadastradas" value={String(empresas.length)} detail={`${empresasAtivas} ativas`} />
+            <MetricCard title="Usuários cadastrados" value={String(usuarios.length)} detail={`${usuariosAtivos} ativos`} />
+            <MetricCard title="Planos configurados" value={String(planos.length)} detail="Configuração real do sistema" />
+            <MetricCard title="Módulos da empresa selecionada" value={String(modulosAtivos)} detail={selectedEmpresa?.nome || 'Nenhuma empresa'} />
           </div>
 
-          {/* Module Adhesion Bar Charts & Alerts Grid */}
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-950 p-6 text-white shadow-md space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <h3 className="font-extrabold text-sm text-white flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-amber-400" />
-                  Adesão aos Módulos da Plataforma
-                </h3>
+          <div className="grid gap-5 lg:grid-cols-2">
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="font-extrabold text-slate-900">Estado da infraestrutura</h2>
+              <div className="mt-4 space-y-3 text-sm">
+                <StatusRow label="Firebase Auth" ok={firebaseStatus.authenticated} detail={firebaseStatus.authenticated ? 'Sessão autenticada' : 'Sessão ausente'} />
+                <StatusRow label="Firestore" ok={!firebaseStatus.error} detail={firebaseStatus.error || 'Sem erro reportado pela camada de dados'} />
+                <StatusRow label="Isolamento multiempresa" ok detail="Dados filtrados por empresaId/companyId" />
+                <StatusRow label="Storage" ok detail="Arquivos do projeto padronizados para Firebase Storage" />
               </div>
+            </section>
 
-              <div className="space-y-3.5 text-xs">
-                {[
-                  { name: 'Recrutamento & Seleção', count: '14 de 14 clientes (100%)', pct: 100, color: 'bg-indigo-500' },
-                  { name: 'Gestão de Benefícios', count: '12 de 14 clientes (85%)', pct: 85, color: 'bg-emerald-400' },
-                  { name: 'Departamento Pessoal', count: '11 de 14 clientes (80%)', pct: 80, color: 'bg-cyan-400' },
-                  { name: 'Ponto Eletrônico', count: '10 de 14 clientes (71%)', pct: 71, color: 'bg-amber-400' },
-                  { name: 'Folha de Pagamento', count: '8 de 14 clientes (57%)', pct: 57, color: 'bg-rose-500' },
-                ].map((item, idx) => (
-                  <div key={idx} className="space-y-1">
-                    <div className="flex justify-between text-[11px]">
-                      <span className="font-semibold text-slate-200">{item.name}</span>
-                      <span className="text-slate-400">{item.count}</span>
-                    </div>
-                    <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
-                      <div className={`h-full ${item.color} rounded-full`} style={{ width: `${item.pct}%` }}></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 text-white shadow-md space-y-4">
-              <h3 className="font-extrabold text-sm text-amber-400 flex items-center gap-2 border-b border-slate-800 pb-3">
-                ⚠️ Alertas & Status
-              </h3>
-
-              <div className="space-y-3 text-xs">
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-                  <div className="font-bold text-amber-300">Renovação de Contrato Próxima</div>
-                  <div className="mt-1 text-[11px] text-slate-300">Grupo Alpha Logística vence em 01/08/2026.</div>
-                </div>
-
-                <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3">
-                  <div className="font-bold text-rose-300">Fatura Pendente de Liquidação</div>
-                  <div className="mt-1 text-[11px] text-slate-300">OmniTech Softwares (R$ 1.290,00).</div>
-                </div>
-
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
-                  <div className="font-bold text-emerald-300">Inteligência Artificial OK</div>
-                  <div className="mt-1 text-[11px] text-slate-300">Consumo diário: 142k tokens. Taxa de erro &lt; 0.01%.</div>
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-extrabold text-slate-900">Empresa em foco</h2>
+                  <p className="text-xs text-slate-500">Use esta seleção para revisar módulos contratados.</p>
                 </div>
               </div>
-            </div>
+              <select
+                value={selectedEmpresa?.id || ''}
+                onChange={(event) => setSelectedEmpresaId(event.target.value)}
+                className="mt-4 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm"
+              >
+                {empresas.map((empresa) => <option key={empresa.id} value={empresa.id}>{empresa.nome}</option>)}
+              </select>
+              {selectedEmpresa && (
+                <div className="mt-4 rounded-xl bg-slate-50 p-4 text-xs text-slate-600">
+                  <div><strong>CNPJ:</strong> {selectedEmpresa.cnpj}</div>
+                  <div className="mt-1"><strong>Status:</strong> {selectedEmpresa.status}</div>
+                  <div className="mt-1"><strong>Plano:</strong> {selectedEmpresa.plano_id}</div>
+                </div>
+              )}
+            </section>
           </div>
         </div>
       )}
 
-      {/* USUARIOS & PERMISSOES TAB */}
-      {activeTab === 'usuarios' && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+      {activeTab === 'empresas' && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="font-extrabold text-base text-slate-900">Usuários & Permissões da Plataforma Master</h2>
-              <p className="text-xs text-slate-500">Gestão global de acessos por empresa e permissões RLS</p>
+              <h2 className="font-extrabold text-slate-900">Empresas</h2>
+              <p className="text-xs text-slate-500">Somente registros reais carregados pela camada Firebase.</p>
             </div>
+            <button onClick={() => setShowCreateModal(true)} className="flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-bold text-white">
+              <Plus className="h-4 w-4" /> Nova empresa
+            </button>
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase text-slate-500">
-                <tr>
-                  <th className="p-3">Usuário</th>
-                  <th className="p-3">E-mail</th>
-                  <th className="p-3">Perfil / Role</th>
-                  <th className="p-3">Empresa Principal</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3 text-right">Ações</th>
-                </tr>
-              </thead>
+          <div className="relative mt-4">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar por nome ou CNPJ" className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm" />
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-slate-200 text-slate-500"><tr><th className="p-3">Empresa</th><th className="p-3">CNPJ</th><th className="p-3">Plano</th><th className="p-3">Status</th><th className="p-3">Ação</th></tr></thead>
               <tbody className="divide-y divide-slate-100">
-                <tr className="hover:bg-slate-50">
-                  <td className="p-3 font-bold text-slate-900">Gustavo Germinari</td>
-                  <td className="p-3 text-slate-600">gustavo.germinari@gmail.com</td>
-                  <td className="p-3"><span className="rounded-md bg-amber-100 px-2 py-0.5 font-bold text-amber-800 text-[10px]">MASTER_ADMIN</span></td>
-                  <td className="p-3">RL CONNECT (Holding)</td>
-                  <td className="p-3"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">Ativo</span></td>
-                  <td className="p-3 text-right"><button className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-700 hover:bg-slate-200">Editar</button></td>
-                </tr>
-                <tr className="hover:bg-slate-50">
-                  <td className="p-3 font-bold text-slate-900">Rafaela Lourenço</td>
-                  <td className="p-3 text-slate-600">rh04consultoria@gmail.com</td>
-                  <td className="p-3"><span className="rounded-md bg-indigo-100 px-2 py-0.5 font-bold text-indigo-800 text-[10px]">EMPRESA_ADMIN</span></td>
-                  <td className="p-3">R Lourenço RH</td>
-                  <td className="p-3"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">Ativo</span></td>
-                  <td className="p-3 text-right"><button className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-700 hover:bg-slate-200">Editar</button></td>
-                </tr>
+                {empresasFiltradas.map((empresa) => (
+                  <tr key={empresa.id}>
+                    <td className="p-3 font-bold text-slate-900">{empresa.nome}</td>
+                    <td className="p-3 text-slate-600">{empresa.cnpj}</td>
+                    <td className="p-3 text-slate-600">{empresa.plano_id}</td>
+                    <td className="p-3"><span className="rounded-full bg-slate-100 px-2 py-1 font-bold text-slate-700">{empresa.status}</span></td>
+                    <td className="p-3"><button onClick={() => dataService.updateEmpresa(empresa.id, { status: empresa.status === 'ativa' ? 'suspensa' : 'ativa' })} className="font-bold text-slate-700 underline">{empresa.status === 'ativa' ? 'Suspender' : 'Ativar'}</button></td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       )}
 
-      {/* RELATORIOS TAB */}
-      {activeTab === 'relatorios' && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-          <h2 className="font-extrabold text-base text-slate-900">Relatórios Executivos da Plataforma (MASTER)</h2>
-          <p className="text-xs text-slate-500">Métricas de faturamento, engajamento e utilização de cota por tenant.</p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-              <div className="font-bold text-slate-800 text-xs">Receita e Faturamento Média</div>
-              <div className="mt-2 text-xl font-black text-slate-900">R$ 1.150,00 /mês</div>
-              <div className="mt-1 text-[11px] text-slate-500">Ticket médio por cliente (MRR / Tenants)</div>
-            </div>
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-              <div className="font-bold text-slate-800 text-xs">Taxa de Churn (Cancelamento)</div>
-              <div className="mt-2 text-xl font-black text-emerald-600">&lt; 0.1% ao ano</div>
-              <div className="mt-1 text-[11px] text-slate-500">Retenção de 99.9% nos últimos 12 meses</div>
-            </div>
+      {activeTab === 'usuarios' && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="font-extrabold text-slate-900">Usuários e permissões</h2>
+          <p className="mt-1 text-xs text-slate-500">A tela não cria usuário fictício. Novos acessos devem ser criados pelo fluxo Firebase Admin.</p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-slate-200 text-slate-500"><tr><th className="p-3">Nome</th><th className="p-3">E-mail</th><th className="p-3">Role</th><th className="p-3">Empresa</th><th className="p-3">Status</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {usuarios.map((usuario) => (
+                  <tr key={usuario.id}><td className="p-3 font-bold text-slate-900">{usuario.nome}</td><td className="p-3">{usuario.email}</td><td className="p-3">{usuario.role}</td><td className="p-3">{usuario.empresa_id}</td><td className="p-3">{usuario.status}</td></tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
+        </section>
       )}
 
-      {/* CONFIGURACOES TAB */}
-      {activeTab === 'configuracoes' && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-          <h2 className="font-extrabold text-base text-slate-900">Segurança e Auditoria Global</h2>
-          <p className="text-xs text-slate-500">Regras do Supabase RLS, chaves de API do Gemini e logs de auditoria.</p>
-          <div className="space-y-3 text-xs">
-            <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div>
-                <div className="font-bold text-slate-800">Políticas de RLS Supabase (Row Level Security)</div>
-                <div className="text-[11px] text-slate-500">Isolamento rigoroso por empresa_id em todas as consultas SQL</div>
-              </div>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 font-extrabold text-emerald-800 text-[10px]">ATIVO (100%)</span>
-            </div>
-            <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div>
-                <div className="font-bold text-slate-800">Supabase Realtime Connection</div>
-                <div className="text-[11px] text-slate-500">Sincronização instantânea de candidaturas e folha</div>
-              </div>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 font-extrabold text-emerald-800 text-[10px]">CONECTADO</span>
-            </div>
+      {activeTab === 'modulos' && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 className="font-extrabold text-slate-900">Módulos por empresa</h2><p className="text-xs text-slate-500">Sem duplicidade: o mesmo módulo é habilitado ou desabilitado por empresa.</p></div>
+            <select value={selectedEmpresa?.id || ''} onChange={(event) => setSelectedEmpresaId(event.target.value)} className="rounded-xl border border-slate-200 p-2.5 text-xs">
+              {empresas.map((empresa) => <option key={empresa.id} value={empresa.id}>{empresa.nome}</option>)}
+            </select>
           </div>
-        </div>
-      )}
-
-      {/* IA TAB */}
-      {activeTab === 'ia' && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-          <h2 className="font-extrabold text-base text-slate-900">Inteligência Artificial & Gemini Integration</h2>
-          <p className="text-xs text-slate-500">Modelos configurados: Gemini 2.5 Flash, Gemini Pro e Triagem Automática de CVs.</p>
-          <div className="rounded-xl bg-slate-950 p-4 text-white text-xs space-y-2">
-            <div className="text-amber-400 font-bold">Status do Engine IA: Operacional</div>
-            <p className="text-slate-300">Triagem de currículos, geração de descrição de vagas e assistente com IA ativa para todas as empresas.</p>
-          </div>
-        </div>
-      )}
-
-      {/* PARCEIROS TAB */}
-      {activeTab === 'parceiros' && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-          <h2 className="font-extrabold text-base text-slate-900">Parceiros e Convênios de Benefícios</h2>
-          <p className="text-xs text-slate-500">Integração com ecossistema de saúde, VR, VA e VT para empresas clientes.</p>
-          <div className="text-xs text-slate-600">Nenhum parceiro pendente de aprovação no momento.</div>
-        </div>
-      )}
-
-      {/* Content depending on activeTab */}
-      {activeTab === 'empresas' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar empresa por nome ou CNPJ..."
-                className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredEmpresas.map((emp) => (
-              <div
-                key={emp.id}
-                onClick={() => setSelectedEmpresa(emp)}
-                className={`cursor-pointer rounded-2xl border p-5 transition shadow-sm ${
-                  selectedEmpresa?.id === emp.id
-                    ? 'border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-600/20'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={emp.logo_url}
-                      alt={emp.nome}
-                      className="h-10 w-10 rounded-xl object-cover border border-slate-200"
-                    />
-                    <div>
-                      <h3 className="font-bold text-slate-900 text-sm">{emp.nome}</h3>
-                      <p className="text-[11px] text-slate-500">CNPJ: {emp.cnpj}</p>
-                    </div>
-                  </div>
-
-                  <span
-                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase ${
-                      emp.status === 'ativa'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-rose-100 text-rose-800'
-                    }`}
-                  >
-                    {emp.status}
-                  </span>
-                </div>
-
-                <div className="mt-4 border-t border-slate-100 pt-3 text-xs space-y-1 text-slate-600">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Plano Atual:</span>
-                    <span className="font-bold text-slate-800 uppercase">{emp.plano_id}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Localização:</span>
-                    <span className="font-medium">{emp.cidade} - {emp.estado}</span>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleToggleStatus(emp.id, emp.status);
-                    }}
-                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                      emp.status === 'ativa'
-                        ? 'bg-rose-50 text-rose-700 hover:bg-rose-100'
-                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                    }`}
-                  >
-                    <Power className="h-3.5 w-3.5" />
-                    {emp.status === 'ativa' ? 'Suspender' : 'Ativar'}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      dataService.setActiveEmpresa(emp.id);
-                    }}
-                    className="flex items-center gap-1 rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"
-                  >
-                    Entrar no Tenant
-                  </button>
-                </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {modulosSelecionados.map(({ modulo, ativo }) => (
+              <div key={modulo.id} className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-start justify-between gap-3"><div><div className="font-bold text-slate-900">{modulo.nome}</div><p className="mt-1 text-xs text-slate-500">{modulo.descricao}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{ativo ? 'ATIVO' : 'INATIVO'}</span></div>
+                <button disabled={!selectedEmpresa} onClick={() => selectedEmpresa && dataService.toggleEmpresaModulo(selectedEmpresa.id, modulo.id, !ativo)} className="mt-4 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-50">{ativo ? 'Desativar' : 'Ativar'}</button>
               </div>
             ))}
           </div>
-        </div>
-      )}
-
-      {activeTab === 'modulos' && selectedEmpresa && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                Ativação de Módulos para {selectedEmpresa.nome}
-              </h2>
-              <p className="text-xs text-slate-500">
-                Ative ou desative módulos contratados em tempo real sem impacto no banco de dados.
-              </p>
-            </div>
-            <span className="rounded-lg bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">
-              CNPJ: {selectedEmpresa.cnpj}
-            </span>
-          </div>
-
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {activeEmpresaModulos.map(({ modulo, ativo }) => (
-              <div
-                key={modulo.id}
-                className={`flex flex-col justify-between rounded-xl border p-4 transition ${
-                  ativo
-                    ? 'border-emerald-200 bg-emerald-50/30'
-                    : 'border-slate-200 bg-slate-50/50 opacity-60'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-900 text-sm">{modulo.nome}</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                        ativo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-                      }`}
-                    >
-                      {ativo ? 'Ativo' : 'Desativado'}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-xs text-slate-500 leading-relaxed">{modulo.descricao}</p>
-                </div>
-
-                <div className="mt-4 border-t border-slate-100 pt-3">
-                  <button
-                    onClick={() =>
-                      dataService.toggleEmpresaModulo(selectedEmpresa.id, modulo.id, !ativo)
-                    }
-                    className={`w-full rounded-xl py-2 text-xs font-bold transition ${
-                      ativo
-                        ? 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                        : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
-                    }`}
-                  >
-                    {ativo ? 'Desativar Módulo' : 'Ativar Módulo'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        </section>
       )}
 
       {activeTab === 'planos' && (
-        <div className="grid gap-6 md:grid-cols-3">
-          {planos.map((plano) => (
-            <div
-              key={plano.id}
-              className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:border-indigo-300"
-            >
-              <div>
-                <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-slate-900 text-base">{plano.nome}</h3>
-                  <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">
-                    SaaS
-                  </span>
-                </div>
-
-                <div className="mt-4">
-                  <span className="text-3xl font-black text-slate-900">
-                    R$ {plano.preco_mensal.toLocaleString('pt-BR')}
-                  </span>
-                  <span className="text-xs text-slate-500"> /mês</span>
-                </div>
-
-                <div className="mt-6 space-y-2 border-t border-slate-100 pt-4 text-xs">
-                  {plano.recursos.map((rec, i) => (
-                    <div key={i} className="flex items-center gap-2 text-slate-700">
-                      <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                      <span>{rec}</span>
-                    </div>
-                  ))}
-                </div>
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="font-extrabold text-slate-900">Planos configurados</h2>
+          <p className="mt-1 text-xs text-slate-500">Exibe somente a configuração existente no sistema; sem faturamento estimado ou receita inventada.</p>
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {planos.map((plano) => (
+              <div key={plano.id} className="rounded-xl border border-slate-200 p-4">
+                <div className="font-extrabold text-slate-900">{plano.nome}</div>
+                <div className="mt-2 text-xl font-black text-slate-950">{plano.preco_mensal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
+                <div className="mt-3 text-xs text-slate-500">Até {plano.max_vagas} vagas • {plano.max_usuarios} usuários</div>
+                <div className="mt-3 flex flex-wrap gap-1">{plano.modulos_inclusos.map((modulo) => <span key={modulo} className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">{modulo}</span>)}</div>
               </div>
-
-              <div className="mt-6 pt-4 border-t border-slate-100">
-                <button className="w-full rounded-xl bg-slate-900 py-2.5 text-xs font-bold text-white hover:bg-slate-800">
-                  Gerenciar Assinantes
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </section>
       )}
 
-      {/* Modal Nova Empresa */}
+      {activeTab === 'auditoria' && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="font-extrabold text-slate-900">Auditoria</h2>
+          <p className="mt-1 text-xs text-slate-500">Eventos disponíveis para a empresa ativa na sessão.</p>
+          <div className="mt-4 space-y-2">
+            {logs.slice(0, 30).map((log) => (
+              <div key={log.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2"><strong>{log.acao}</strong><span className="text-slate-400">{new Date(log.criado_em).toLocaleString('pt-BR')}</span></div>
+                <p className="mt-1 text-slate-600">{log.detalhes}</p>
+              </div>
+            ))}
+            {!logs.length && <p className="text-sm text-slate-500">Nenhum evento de auditoria carregado.</p>}
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'configuracoes' && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="font-extrabold text-slate-900">Configurações da plataforma</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <ConfigCard title="Banco oficial" value="Cloud Firestore" />
+            <ConfigCard title="Autenticação oficial" value="Firebase Authentication" />
+            <ConfigCard title="Arquivos" value="Firebase Storage" />
+            <ConfigCard title="Projeto Firebase" value="rl-connect-ed797" />
+          </div>
+          {firebaseStatus.error && <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">Erro Firebase: {firebaseStatus.error}</div>}
+          <p className="mt-4 text-xs text-slate-500">Google Calendar/Meet é uma integração externa. O login principal continua sendo exclusivamente Firebase Authentication.</p>
+        </section>
+      )}
+
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 text-base">Cadastrar Nova Empresa SaaS</h3>
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateEmpresa} className="mt-4 space-y-4 text-xs">
-              <div>
-                <label className="font-bold text-slate-700">Nome da Razão Social / Fantasia *</label>
-                <input
-                  type="text"
-                  required
-                  value={nomeForm}
-                  onChange={(e) => setNomeForm(e.target.value)}
-                  placeholder="Ex: Grupo Inovação RH LTDA"
-                  className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700">CNPJ *</label>
-                <input
-                  type="text"
-                  required
-                  value={cnpjForm}
-                  onChange={(e) => setCnpjForm(e.target.value)}
-                  placeholder="00.000.000/0001-00"
-                  className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700">Cidade</label>
-                  <input
-                    type="text"
-                    value={cidadeForm}
-                    onChange={(e) => setCidadeForm(e.target.value)}
-                    placeholder="São Paulo"
-                    className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700">Estado (UF)</label>
-                  <input
-                    type="text"
-                    value={estadoForm}
-                    onChange={(e) => setEstadoForm(e.target.value)}
-                    placeholder="SP"
-                    className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:border-indigo-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 shadow-md"
-                >
-                  Cadastrar Empresa
-                </button>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between"><h2 className="font-extrabold text-slate-900">Cadastrar empresa</h2><button onClick={() => setShowCreateModal(false)}><X className="h-5 w-5 text-slate-400" /></button></div>
+            <form onSubmit={handleCreateEmpresa} className="mt-5 space-y-4">
+              <Field label="Nome *" value={nomeForm} onChange={setNomeForm} />
+              <Field label="CNPJ *" value={cnpjForm} onChange={setCnpjForm} />
+              <div className="grid gap-4 sm:grid-cols-2"><Field label="Cidade" value={cidadeForm} onChange={setCidadeForm} /><Field label="UF" value={estadoForm} onChange={setEstadoForm} /></div>
+              {formError && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{formError}</div>}
+              <div className="flex justify-end gap-2 pt-2"><button type="button" onClick={() => setShowCreateModal(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600">Cancelar</button><button type="submit" className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white">Cadastrar</button></div>
             </form>
           </div>
         </div>
@@ -649,3 +322,19 @@ export const MasterAdminView: React.FC = () => {
     </div>
   );
 };
+
+const MetricCard: React.FC<{ title: string; value: string; detail: string }> = ({ title, value, detail }) => (
+  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="text-xs font-bold text-slate-500">{title}</div><div className="mt-2 text-2xl font-black text-slate-950">{value}</div><div className="mt-1 text-xs text-slate-500">{detail}</div></div>
+);
+
+const StatusRow: React.FC<{ label: string; ok: boolean; detail: string }> = ({ label, ok, detail }) => (
+  <div className="flex items-start gap-3 rounded-xl border border-slate-100 p-3"><CheckCircle2 className={`mt-0.5 h-4 w-4 ${ok ? 'text-emerald-600' : 'text-rose-600'}`} /><div><div className="font-bold text-slate-900">{label}</div><div className="text-xs text-slate-500">{detail}</div></div></div>
+);
+
+const ConfigCard: React.FC<{ title: string; value: string }> = ({ title, value }) => (
+  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs font-bold text-slate-500">{title}</div><div className="mt-1 font-extrabold text-slate-900">{value}</div></div>
+);
+
+const Field: React.FC<{ label: string; value: string; onChange: (value: string) => void }> = ({ label, value, onChange }) => (
+  <label className="block text-xs font-bold text-slate-700">{label}<input value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-sm font-normal" /></label>
+);
