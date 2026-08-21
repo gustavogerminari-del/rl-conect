@@ -32,6 +32,8 @@ on:
       - 'tests/workflow-engine.test.mjs'
       - 'tests/users-create-server.test.mjs'
       - 'tests/interview-flow.test.mjs'
+      - 'tests/tenant-firebase-architecture.test.mjs'
+      - 'tests/hiring-flow-rules.test.ts'
       - 'scripts/build-verified.sh'
       - 'scripts/sites-env.sh'
       - 'scripts/validate-artifact.sh'
@@ -66,6 +68,8 @@ on:
       - 'tests/workflow-engine.test.mjs'
       - 'tests/users-create-server.test.mjs'
       - 'tests/interview-flow.test.mjs'
+      - 'tests/tenant-firebase-architecture.test.mjs'
+      - 'tests/hiring-flow-rules.test.ts'
       - '.env.example'
       - 'docs/N8N_REMOVAL_MIGRATION.md'
       - '.github/workflows/master-panel-qa.yml'
@@ -87,6 +91,8 @@ jobs:
       - name: Master regression tests
         run: node --test --test-force-exit tests/master-panel-official.test.mjs tests/master-access-protection.test.mjs tests/master-client-editing.test.mjs
       - name: Workflow migration regression tests
-        run: node --test --test-force-exit tests/workflow-engine.test.mjs tests/users-create-server.test.mjs tests/interview-flow.test.mjs
+        run: node --test --test-force-exit tests/workflow-engine.test.mjs tests/users-create-server.test.mjs tests/interview-flow.test.mjs tests/tenant-firebase-architecture.test.mjs
+      - name: Hiring flow rules tests
+        run: node --import tsx --test tests/hiring-flow-rules.test.ts
       - name: Build
         run: npm run build
