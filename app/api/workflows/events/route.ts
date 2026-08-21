@@ -128,8 +128,8 @@ async function dispatchEvent(args: {
     return { handled: true as const, result: { auditId } };
   }
 
-  // Migração segura: eventos ainda não convertidos do n8n ficam persistidos
-  // para implementação progressiva, sem serem descartados nem executarem efeitos parciais.
+  // Migração segura: eventos ainda não convertidos do orquestrador legado ficam
+  // persistidos para implementação progressiva, sem descarte nem efeitos parciais.
   return {
     handled: false as const,
     result: { reason: 'handler_not_migrated', type: event.type },
