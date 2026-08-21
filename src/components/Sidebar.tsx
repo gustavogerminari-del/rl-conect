@@ -35,10 +35,25 @@ interface SidebarProps {
   onSelectTab: (tab: ViewTab) => void;
 }
 
+const normalize = (value: unknown) => String(value || '').trim();
+
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
-  const user = dataService.getCurrentUser();
-  const normalizedRole = String((user as any)?.role || (user as any)?.tipoUsuario || '').trim().toLowerCase();
-  const isMaster = normalizedRole === 'master_admin' || normalizedRole === 'master';
+  const user: any = dataService.getCurrentUser();
+  const normalizedRole = normalize(user?.role || user?.tipoUsuario).toLowerCase().replace(/[\s-]+/g, '_');
+  const isMaster = ['master_admin', 'master', 'super_administrador'].includes(normalizedRole);
+  const isCompanyAdmin = ['admin_empresa', 'administrador_empresa', 'empresa_admin', 'gestor_empresa', 'admin', 'administrador'].includes(normalizedRole)
+    || normalize(user?.tipoUsuario).toUpperCase() === 'ADMIN_EMPRESA';
+
+  const modules: Record<string, boolean> = {
+    ...(user?.modulos && typeof user.modulos === 'object' ? user.modulos : {}),
+    ...(user?.modules && typeof user.modules === 'object' ? user.modules : {}),
+  };
+  const permissions = new Set<string>([
+    ...(Array.isArray(user?.permissoes) ? user.permissoes : []),
+    ...(Array.isArray(user?.permissions) ? user.permissions : []),
+  ].map(String));
+
+  const hasAccess = (...keys: string[]) => isMaster || keys.some((key) => modules[key] === true || permissions.has(key));
 
   const menuGroups = [
     {
@@ -50,30 +65,37 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
     {
       title: 'RECRUTAMENTO & HEADHUNTER',
       items: [
-        { id: 'recrutamento' as ViewTab, label: 'Vagas & Processos (ATS)', icon: Briefcase, visible: true, badge: '16' },
-        { id: 'headhunter' as ViewTab, label: 'Headhunter Executive', icon: UserCheck, visible: true, badge: 'B2B' },
-        { id: 'ia_screening' as ViewTab, label: 'IA & Triagem CV', icon: Sparkles, visible: true, badge: 'Gemini' },
-        { id: 'agenda' as ViewTab, label: 'Agenda & Entrevistas', icon: Calendar, visible: true, badge: '1' },
+        { id: 'recrutamento' as ViewTab, label: 'Vagas & Processos (ATS)', icon: Briefcase, visible: hasAccess('recrutamento', 'vagas', 'candidatos', 'contratacoes'), badge: null },
+        { id: 'headhunter' as ViewTab, label: 'Headhunter Executive', icon: UserCheck, visible: hasAccess('headhunter'), badge: 'B2B' },
+        { id: 'ia_screening' as ViewTab, label: 'IA & Triagem CV', icon: Sparkles, visible: hasAccess('ia_cv', 'consultorRH', 'recrutamento'), badge: 'Gemini' },
+        { id: 'agenda' as ViewTab, label: 'Agenda & Entrevistas', icon: Calendar, visible: hasAccess('agenda', 'entrevistas', 'recrutamento'), badge: null },
       ],
     },
     {
       title: 'DEPARTAMENTO PESSOAL',
       items: [
-        { id: 'departamento_pessoal' as ViewTab, label: 'Gestão DP & Ponto', icon: Users, visible: true, badge: 'RH' },
+        { id: 'departamento_pessoal' as ViewTab, label: 'Gestão DP & Ponto', icon: Users, visible: hasAccess('departamentoPessoal', 'departamento_pessoal', 'dp', 'admissao', 'funcionarios'), badge: 'RH' },
+      ],
+    },
+    {
+      title: 'PORTAL & CONFIGURAÇÕES',
+      items: [
+        { id: 'portal_vagas' as ViewTab, label: 'Portal de Vagas Público', icon: Globe, visible: hasAccess('siteVagas', 'siteVagasPersonalizado', 'portal_vagas', 'recrutamento'), badge: 'Público' },
+        { id: 'audit_logs' as ViewTab, label: 'Auditoria & Logs', icon: ShieldAlert, visible: hasAccess('auditoria', 'auditoriaLogs'), badge: 'Segurança' },
+        { id: 'settings' as ViewTab, label: 'Configurações Empresa', icon: Settings, visible: isCompanyAdmin || hasAccess('configuracoes'), badge: null },
       ],
     },
     {
       title: 'PLATAFORMA & MASTER',
       items: [
-        { id: 'master_admin' as ViewTab, label: 'Painel Master Admin', icon: Crown, visible: true, badge: 'MASTER', highlight: true },
+        { id: 'master_admin' as ViewTab, label: 'Painel Master Admin', icon: Crown, visible: isMaster, badge: 'MASTER', highlight: true },
         { id: 'developer_area' as ViewTab, label: 'Área do Programador', icon: Code2, visible: isMaster, badge: 'DEV' },
-        { id: 'construtor_ia' as ViewTab, label: 'Construtor Master IA', icon: Cpu, visible: true, badge: 'IA' },
-        { id: 'portal_vagas' as ViewTab, label: 'Portal de Vagas Público', icon: Globe, visible: true, badge: 'Público' },
-        { id: 'audit_logs' as ViewTab, label: 'Auditoria & Logs', icon: ShieldAlert, visible: true, badge: 'Segurança' },
-        { id: 'settings' as ViewTab, label: 'Configurações Empresa', icon: Settings, visible: true, badge: null },
+        { id: 'construtor_ia' as ViewTab, label: 'Construtor Master IA', icon: Cpu, visible: isMaster, badge: 'IA' },
       ],
     },
   ];
+
+  const activeEmpresa: any = dataService.getActiveEmpresa?.();
 
   return (
     <aside className="flex min-h-screen w-60 shrink-0 flex-col border-r border-[#152e4d] bg-[#0B1D33] text-slate-300">
@@ -136,7 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
           <span className="h-2 w-2 rounded-full bg-emerald-400"></span>
           <span>Firebase conectado</span>
         </div>
-        <div className="truncate text-[10px] text-slate-500">Holding: <strong className="text-slate-300">{dataService.getActiveEmpresa().nome}</strong></div>
+        <div className="truncate text-[10px] text-slate-500">Empresa: <strong className="text-slate-300">{activeEmpresa?.nome || activeEmpresa?.companyName || 'Tenant autenticado'}</strong></div>
       </div>
     </aside>
   );
