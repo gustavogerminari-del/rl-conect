@@ -5,6 +5,7 @@ on:
     branches:
       - codex/area-programador-v55
       - codex/remove-n8n-rh-mil
+      - codex/ponto-rh-integration-impl
     paths:
       - 'src/main.tsx'
       - 'src/App.tsx'
@@ -21,6 +22,7 @@ on:
       - 'src/master-admin/**'
       - 'src/services/AuditService.ts'
       - 'src/services/ModuleCatalogService.ts'
+      - 'src/services/PontoIntegrationService.ts'
       - 'src/services/businessRules.ts'
       - 'src/services/dataService.ts'
       - 'src/services/firebaseSessionService.ts'
@@ -28,21 +30,25 @@ on:
       - 'src/services/interviewService.ts'
       - 'app/api/workflows/**'
       - 'app/api/users/create/**'
+      - 'app/api/integrations/ponto/**'
       - 'tests/master-*.test.mjs'
       - 'tests/workflow-engine.test.mjs'
       - 'tests/users-create-server.test.mjs'
       - 'tests/interview-flow.test.mjs'
       - 'tests/tenant-firebase-architecture.test.mjs'
+      - 'tests/ponto-rh-integration.test.mjs'
       - 'tests/hiring-flow-rules.test.ts'
       - 'scripts/build-verified.sh'
       - 'scripts/sites-env.sh'
       - 'scripts/validate-artifact.sh'
       - 'scripts/generate-source-catalog.mjs'
       - 'package.json'
+      - '.env.example'
       - '.github/workflows/master-panel-qa.yml'
   pull_request:
     branches:
       - main
+      - codex/remove-n8n-rh-mil
     paths:
       - 'src/main.tsx'
       - 'src/App.tsx'
@@ -58,6 +64,8 @@ on:
       - 'src/lib/tenant.ts'
       - 'src/master-admin/**'
       - 'src/services/AuditService.ts'
+      - 'src/services/ModuleCatalogService.ts'
+      - 'src/services/PontoIntegrationService.ts'
       - 'src/services/businessRules.ts'
       - 'src/services/dataService.ts'
       - 'src/services/firebaseSessionService.ts'
@@ -65,10 +73,13 @@ on:
       - 'src/services/interviewService.ts'
       - 'app/api/workflows/**'
       - 'app/api/users/create/**'
+      - 'app/api/integrations/ponto/**'
+      - 'tests/master-*.test.mjs'
       - 'tests/workflow-engine.test.mjs'
       - 'tests/users-create-server.test.mjs'
       - 'tests/interview-flow.test.mjs'
       - 'tests/tenant-firebase-architecture.test.mjs'
+      - 'tests/ponto-rh-integration.test.mjs'
       - 'tests/hiring-flow-rules.test.ts'
       - '.env.example'
       - 'docs/N8N_REMOVAL_MIGRATION.md'
@@ -91,7 +102,7 @@ jobs:
       - name: Master regression tests
         run: node --test --test-force-exit tests/master-panel-official.test.mjs tests/master-access-protection.test.mjs tests/master-client-editing.test.mjs
       - name: Workflow migration regression tests
-        run: node --test --test-force-exit tests/workflow-engine.test.mjs tests/users-create-server.test.mjs tests/interview-flow.test.mjs tests/tenant-firebase-architecture.test.mjs
+        run: node --test --test-force-exit tests/workflow-engine.test.mjs tests/users-create-server.test.mjs tests/interview-flow.test.mjs tests/tenant-firebase-architecture.test.mjs tests/ponto-rh-integration.test.mjs
       - name: Hiring flow rules tests
         run: node --import tsx --test tests/hiring-flow-rules.test.ts
       - name: Build
