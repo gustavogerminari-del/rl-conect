@@ -1,4 +1,4 @@
-type ServiceAccount = {
+export type ServiceAccount = {
   project_id: string;
   client_email: string;
   private_key: string;
@@ -11,8 +11,14 @@ type FirestoreValue =
   | { booleanValue: boolean }
   | { integerValue: string }
   | { doubleValue: number }
+  | { timestampValue: string }
   | { arrayValue: { values?: FirestoreValue[] } }
   | { mapValue: { fields?: Record<string, FirestoreValue> } };
+
+type FirestoreDocument = {
+  name?: string;
+  fields?: Record<string, FirestoreValue>;
+};
 
 function base64Url(value: string | Uint8Array) {
   const binary = typeof value === 'string' ? new TextEncoder().encode(value) : value;
@@ -116,9 +122,7 @@ function encodeFirestoreValue(value: unknown): FirestoreValue {
       ? { integerValue: String(value) }
       : { doubleValue: value };
   }
-  if (Array.isArray(value)) {
-    return { arrayValue: { values: value.map(encodeFirestoreValue) } };
-  }
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeFirestoreValue) } };
   if (typeof value === 'object') {
     return { mapValue: { fields: encodeFirestoreFields(value as Record<string, unknown>) } };
   }
@@ -133,8 +137,89 @@ function encodeFirestoreFields(input: Record<string, unknown>) {
   );
 }
 
-function documentUrl(projectId: string, collection: string, documentId: string) {
-  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${encodeURIComponent(collection)}/${encodeURIComponent(documentId)}`;
+function decodeFirestoreValue(value?: FirestoreValue): any {
+  if (!value || typeof value !== 'object') return undefined;
+  if ('nullValue' in value) return null;
+  if ('stringValue' in value) return value.stringValue;
+  if ('booleanValue' in value) return value.booleanValue;
+  if ('integerValue' in value) return Number(value.integerValue);
+  if ('doubleValue' in value) return Number(value.doubleValue);
+  if ('timestampValue' in value) return value.timestampValue;
+  if ('arrayValue' in value) return (value.arrayValue.values || []).map(decodeFirestoreValue);
+  if ('mapValue' in value) {
+    return Object.fromEntries(
+      Object.entries(value.mapValue.fields || {}).map(([key, nested]) => [key, decodeFirestoreValue(nested)])
+    );
+  }
+  return undefined;
+}
+
+export function decodeFirestoreDocument(document?: FirestoreDocument | null): Record<string, any> | null {
+  if (!document) return null;
+  const id = String(document.name || '').split('/').pop() || '';
+  return {
+    ...(id ? { id } : {}),
+    ...Object.fromEntries(
+      Object.entries(document.fields || {}).map(([key, value]) => [key, decodeFirestoreValue(value)])
+    ),
+  };
+}
+
+function documentUrl(projectId: string, collectionName: string, documentId: string) {
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${encodeURIComponent(collectionName)}/${encodeURIComponent(documentId)}`;
+}
+
+export async function readFirestoreDocument(args: {
+  projectId: string;
+  accessToken: string;
+  collection: string;
+  documentId: string;
+}) {
+  const response = await fetch(documentUrl(args.projectId, args.collection, args.documentId), {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Falha ao ler ${args.collection}/${args.documentId} (${response.status}).`);
+  return decodeFirestoreDocument(await response.json());
+}
+
+export async function queryFirestoreByString(args: {
+  projectId: string;
+  accessToken: string;
+  collection: string;
+  fieldPath: string;
+  value: string;
+}) {
+  const response = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(args.projectId)}/databases/(default)/documents:runQuery`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${args.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: args.collection }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: args.fieldPath },
+              op: 'EQUAL',
+              value: { stringValue: args.value },
+            },
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    }
+  );
+  if (!response.ok) throw new Error(`Falha na consulta ${args.collection}.${args.fieldPath} (${response.status}).`);
+  const rows: Array<{ document?: FirestoreDocument }> = await response.json();
+  return rows.flatMap((row) => {
+    const decoded = decodeFirestoreDocument(row.document);
+    return decoded ? [decoded] : [];
+  });
 }
 
 export async function createWorkflowEventDocument(args: {
