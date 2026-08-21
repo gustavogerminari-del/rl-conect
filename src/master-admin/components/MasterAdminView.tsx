@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Code2 } from 'lucide-react';
+import { Code2, Link2 } from 'lucide-react';
 import {
   MasterAdminView as MasterAdminOfficialView,
   type MasterNavigationSection,
 } from './MasterAdminOfficialView';
 import { validarAcessoMaster } from '../../auth/masterValidation';
+import { PontoIntegrationPanel } from './PontoIntegrationPanel';
 
 export type { MasterNavigationSection } from './MasterAdminOfficialView';
 
@@ -56,12 +57,14 @@ type MasterAdminViewProps = React.ComponentProps<typeof MasterAdminOfficialView>
  * - mantém a tela oficial e toda a arquitetura Firebase existente;
  * - normaliza rótulos legados (OpenAI -> Gemini);
  * - acrescenta o acesso à rota própria da Área do Programador;
+ * - acrescenta a configuração segura da API do PONTO RH por empresa;
  * - garante rolagem vertical própria da lateral em telas desktop baixas.
  */
 export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminViewProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [officialSection] = useState<MasterNavigationSection>(props.initialSection ?? 'dashboard');
   const [menuHost, setMenuHost] = useState<HTMLElement | null>(null);
+  const [pontoPanelOpen, setPontoPanelOpen] = useState(false);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -99,6 +102,15 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, [onOpenDeveloperArea]);
 
+  const openPontoIntegration = useCallback(async () => {
+    const validation = await validarAcessoMaster();
+    if (!validation.autorizado) {
+      window.alert(validation.motivo || 'Acesso Master não autorizado.');
+      return;
+    }
+    setPontoPanelOpen(true);
+  }, []);
+
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -118,7 +130,6 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
 
       const host = root.querySelector('aside > div');
       setMenuHost(host instanceof HTMLElement ? host : null);
-
     };
 
     normalizeVisibleLabels();
@@ -132,16 +143,27 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
       <style>{MASTER_SCROLL_CSS}</style>
       <MasterAdminOfficialView {...props} initialSection={officialSection} key={officialSection} />
       {menuHost && createPortal(
-        <button
-          type="button"
-          onClick={() => void openDeveloperArea()}
-          className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-300 hover:bg-slate-800"
-        >
-          <Code2 className="h-4 w-4 shrink-0" />
-          <span>Área do Programador</span>
-        </button>,
+        <Fragment>
+          <button
+            type="button"
+            onClick={() => void openPontoIntegration()}
+            className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-300 hover:bg-slate-800"
+          >
+            <Link2 className="h-4 w-4 shrink-0" />
+            <span>Integração PONTO RH</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void openDeveloperArea()}
+            className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-300 hover:bg-slate-800"
+          >
+            <Code2 className="h-4 w-4 shrink-0" />
+            <span>Área do Programador</span>
+          </button>
+        </Fragment>,
         menuHost,
       )}
+      {pontoPanelOpen && <PontoIntegrationPanel onClose={() => setPontoPanelOpen(false)} />}
     </div>
   );
 }
