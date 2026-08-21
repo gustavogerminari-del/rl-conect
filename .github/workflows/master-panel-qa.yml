@@ -6,15 +6,19 @@ on:
       - codex/area-programador-v55
       - codex/remove-n8n-rh-mil
     paths:
+      - 'src/main.tsx'
       - 'src/App.tsx'
+      - 'src/auth/**'
       - 'src/components/Header.tsx'
       - 'src/components/Sidebar.tsx'
       - 'src/components/FirebaseLoginView.tsx'
       - 'src/components/views/AgendaView.tsx'
       - 'src/developer/**'
       - 'src/lib/firebase.ts'
+      - 'src/lib/firestoreServices.ts'
       - 'src/lib/tenant.ts'
       - 'src/master-admin/**'
+      - 'src/services/AuditService.ts'
       - 'src/services/ModuleCatalogService.ts'
       - 'src/services/businessRules.ts'
       - 'src/services/dataService.ts'
@@ -37,15 +41,19 @@ on:
     branches:
       - main
     paths:
+      - 'src/main.tsx'
       - 'src/App.tsx'
+      - 'src/auth/**'
       - 'src/components/Header.tsx'
       - 'src/components/Sidebar.tsx'
       - 'src/components/FirebaseLoginView.tsx'
       - 'src/components/views/AgendaView.tsx'
       - 'src/developer/**'
       - 'src/lib/firebase.ts'
+      - 'src/lib/firestoreServices.ts'
       - 'src/lib/tenant.ts'
       - 'src/master-admin/**'
+      - 'src/services/AuditService.ts'
       - 'src/services/businessRules.ts'
       - 'src/services/dataService.ts'
       - 'src/services/firebaseSessionService.ts'
