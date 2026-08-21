@@ -26,6 +26,15 @@ test('rota cria Auth e persiste perfis canônicos usuarios e users', async () =>
   assert.match(route, /modules/);
 });
 
+test('rota valida a empresa no Firestore e deriva companyName no servidor', async () => {
+  const route = await read('app/api/users/create/route.ts');
+  assert.match(route, /resolveCompanyName/);
+  assert.match(route, /readFirestoreDocument\(projectId, accessToken, 'empresas', companyId\)/);
+  assert.match(route, /A empresa vinculada ao usuário não existe/);
+  assert.match(route, /A empresa selecionada não possui um nome válido/);
+  assert.doesNotMatch(route, /String\(body\.companyName/);
+});
+
 test('rota possui rollback quando a persistência do perfil falha', async () => {
   const route = await read('app/api/users/create/route.ts');
   assert.match(route, /Promise\.allSettled/);
