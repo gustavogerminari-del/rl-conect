@@ -36,13 +36,27 @@ Implementado:
 
 ## Fase 2 — Persistência e provisionamento
 
-Próximos handlers a migrar sem remover o n8n ainda:
+Status: parcialmente implementada.
 
-- criação real de usuário no Firebase Authentication;
-- criação/atualização do perfil em Firestore;
-- vínculo de usuário com empresa e módulos;
+Implementado:
+
+- `POST /api/users/create` server-side;
+- validação da sessão Firebase do chamador e exigência de perfil MASTER;
+- criação real no Firebase Authentication;
+- compatibilidade controlada para conta Auth já existente;
+- atualização do `displayName` no Authentication;
+- persistência canônica em `usuarios` e espelho em `users`;
+- permissões e módulos preservados no perfil;
+- validação de `empresaId` diretamente na coleção `empresas`;
+- `companyName` derivado no servidor, sem confiar no valor enviado pelo navegador;
+- rollback de perfis e de conta Auth recém-criada se a persistência falhar.
+
+Ainda pendente nesta fase:
+
+- mover demais mutações administrativas para handlers internos;
 - atualização transacional de assinatura e permissões;
-- auditoria dos efeitos administrativos.
+- auditoria unificada dos efeitos administrativos;
+- eliminar o fallback de criação pelo navegador somente depois de validar o backend no ambiente publicado.
 
 ## Fase 3 — Agenda, Meet e e-mail
 
