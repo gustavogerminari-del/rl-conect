@@ -31,6 +31,11 @@ function developerAreaFromUrl() {
   return window.location.pathname.replace(/\/+$/, '') === DEVELOPER_AREA_PATH;
 }
 
+function isMasterRole(value: unknown) {
+  const role = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return ['master', 'master_admin', 'super_administrador'].includes(role);
+}
+
 export function App() {
   const [currentTab, setCurrentTab] = useState<ViewTab>('dashboard');
   const [status, setStatus] = useState(dataService.getFirebaseStatus());
@@ -125,8 +130,17 @@ export function App() {
     return <FirebaseLoginView error={status.error} />;
   }
 
+  const currentUser = dataService.getCurrentUser();
+  const isMaster = isMasterRole(currentUser?.role) || isMasterRole((currentUser as any)?.tipoUsuario);
+
   if (developerAreaRequested) {
     return <DeveloperArea onBackToMaster={returnToMaster} />;
+  }
+
+  // MASTER é identidade da plataforma e não possui empresa. Por isso o Painel
+  // Master é uma tela própria, sem montar Header/Sidebar dependentes de tenant.
+  if (isMaster) {
+    return <MasterAdminView onOpenDeveloperArea={() => navigate('developer_area')} />;
   }
 
   return (
@@ -136,7 +150,6 @@ export function App() {
         <Header onNavigateTab={navigate} currentTab={currentTab} />
         <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6 lg:p-8">
           {currentTab === 'dashboard' && <DashboardView onNavigateTab={navigate} />}
-          {currentTab === 'master_admin' && <MasterAdminView onOpenDeveloperArea={() => navigate('developer_area')} />}
           {currentTab === 'construtor_ia' && <MasterBuilderView />}
           {currentTab === 'recrutamento' && <RecruitmentView />}
           {currentTab === 'headhunter' && <HeadhunterView />}
