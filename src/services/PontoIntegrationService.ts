@@ -1,18 +1,12 @@
 import { auth } from '../lib/firebase';
 
-export interface PontoIntegrationConfig {
-  companyId: string;
-  provider: 'PONTO_RH';
-  baseUrl: string;
-  clientId: string;
-  hasClientSecret: boolean;
-  pontoCompanyId: string;
-  pontoCompanyName: string;
+export interface PontoIntegrationStatus {
+  empresaId: string;
+  automatico: true;
+  moduleEnabled: boolean;
   status: string;
-  lastCheckedAt: string | null;
   lastSyncAt: string | null;
   lastError: string | null;
-  updatedAt: string | null;
 }
 
 export interface PontoSyncResult {
@@ -24,7 +18,7 @@ export interface PontoSyncResult {
 
 async function headers() {
   const user = auth.currentUser;
-  if (!user) throw new Error('Sessão Firebase não encontrada. Entre novamente como MASTER.');
+  if (!user) throw new Error('Sessão Firebase não encontrada.');
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${await user.getIdToken()}`,
@@ -40,40 +34,30 @@ async function parse<T>(response: Response): Promise<T> {
 }
 
 export const PontoIntegrationService = {
-  async get(companyId: string) {
-    const response = await fetch(`/api/integrations/ponto?companyId=${encodeURIComponent(companyId)}`, {
+  async get(companyId?: string) {
+    const query = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const response = await fetch(`/api/integrations/ponto${query}`, {
       headers: await headers(),
       cache: 'no-store',
     });
-    const body = await parse<{ success: true; config: PontoIntegrationConfig }>(response);
-    return body.config;
+    return parse<{ success: true } & PontoIntegrationStatus>(response);
   },
 
-  async save(input: { companyId: string; baseUrl: string; clientId: string; clientSecret?: string }) {
-    const response = await fetch('/api/integrations/ponto', {
-      method: 'PUT',
-      headers: await headers(),
-      body: JSON.stringify(input),
-    });
-    const body = await parse<{ success: true; config: PontoIntegrationConfig }>(response);
-    return body.config;
-  },
-
-  async test(companyId: string) {
+  async ensure(companyId: string) {
     const response = await fetch('/api/integrations/ponto', {
       method: 'POST',
       headers: await headers(),
-      body: JSON.stringify({ companyId, action: 'test' }),
+      body: JSON.stringify({ companyId, action: 'ensure' }),
     });
-    return parse<{ success: true; status: string; empresa: Record<string, unknown> | null }>(response);
+    return parse<{ success: true; automatico: true; result: Record<string, unknown> }>(response);
   },
 
-  async sync(companyId: string, inicio?: string, fim?: string) {
+  async sync(companyId?: string, inicio?: string, fim?: string) {
     const response = await fetch('/api/integrations/ponto', {
       method: 'POST',
       headers: await headers(),
-      body: JSON.stringify({ companyId, action: 'sync', inicio, fim }),
+      body: JSON.stringify({ ...(companyId ? { companyId } : {}), action: 'sync', inicio, fim }),
     });
-    return parse<{ success: true } & PontoSyncResult>(response);
+    return parse<{ success: true; automatico: true } & PontoSyncResult>(response);
   },
 };
