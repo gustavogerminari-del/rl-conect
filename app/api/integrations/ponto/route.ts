@@ -10,9 +10,10 @@ const JSON_HEADERS = {
   'Cache-Control': 'no-store',
 };
 
-const MASTER_ROLES = new Set(['MASTER', 'MASTER_ADMIN', 'SUPER_ADMINISTRADOR', 'SUPER_ADMINISTRADOR']);
+const MASTER_ROLES = new Set(['MASTER', 'MASTER_ADMIN', 'SUPER_ADMINISTRADOR']);
 const DEFAULT_PONTO_URL = 'https://pronto-rh.gustavogerminari.workers.dev';
-const CONFIG_COLLECTION = 'integration_secrets';
+const STATUS_COLLECTION = 'ponto_integracoes';
+
 const normalizeRole = (value: unknown) => String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
 
 function firebaseApiKey() {
@@ -21,63 +22,20 @@ function firebaseApiKey() {
   return apiKey;
 }
 
-function integrationKey() {
-  const raw = String(process.env.PONTO_RH_INTEGRATION_KEY || '').trim();
-  if (raw.length < 32) throw new Error('PONTO_RH_INTEGRATION_KEY deve possuir pelo menos 32 caracteres.');
-  return raw;
+function pontoBaseUrl() {
+  return String(process.env.PONTO_RH_BASE_URL || DEFAULT_PONTO_URL).trim().replace(/\/+$/g, '');
 }
 
-function bytesToBase64(bytes: Uint8Array) {
-  let raw = '';
-  bytes.forEach((byte) => { raw += String.fromCharCode(byte); });
-  return btoa(raw);
+function systemToken() {
+  const token = String(process.env.PONTO_RH_SYSTEM_TOKEN || '').trim();
+  if (token.length < 32) throw new Error('PONTO_RH_SYSTEM_TOKEN não está configurado no servidor do RH-MIL.');
+  return token;
 }
 
-function base64ToBytes(value: string) {
-  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
-}
-
-async function cryptoKey() {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(integrationKey()));
-  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-async function encryptSecret(secret: string) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    await cryptoKey(),
-    new TextEncoder().encode(secret),
-  );
-  return `v1.${bytesToBase64(iv)}.${bytesToBase64(new Uint8Array(encrypted))}`;
-}
-
-async function decryptSecret(value: string) {
-  const [version, ivRaw, cipherRaw] = String(value || '').split('.');
-  if (version !== 'v1' || !ivRaw || !cipherRaw) throw new Error('Credencial PONTO RH armazenada em formato inválido.');
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: base64ToBytes(ivRaw) },
-    await cryptoKey(),
-    base64ToBytes(cipherRaw),
-  );
-  return new TextDecoder().decode(decrypted);
-}
-
-function cleanBaseUrl(value: unknown) {
-  const raw = String(value || DEFAULT_PONTO_URL).trim().replace(/\/+$/g, '');
-  const parsed = new URL(raw);
-  const localhost = ['localhost', '127.0.0.1'].includes(parsed.hostname);
-  if (parsed.protocol !== 'https:' && !localhost) throw new Error('A URL do PONTO RH deve usar HTTPS.');
-  return parsed.toString().replace(/\/+$/g, '');
-}
-
-function configId(companyId: string) {
-  return `ponto__${companyId}`;
-}
-
-async function requireMaster(request: Request, projectId: string, accessToken: string) {
+async function firebaseIdentity(request: Request, projectId: string, accessToken: string) {
   const idToken = String(request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!idToken) throw Object.assign(new Error('Sessão Firebase obrigatória.'), { status: 401 });
+
   const lookup = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseApiKey())}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -92,18 +50,19 @@ async function requireMaster(request: Request, projectId: string, accessToken: s
   const primary = await readFirestoreDocument({ projectId, accessToken, collection: 'usuarios', documentId: uid });
   const legacy = primary ? null : await readFirestoreDocument({ projectId, accessToken, collection: 'users', documentId: uid });
   const profile = primary || legacy;
-  const role = normalizeRole(profile?.role || profile?.perfil || profile?.tipoUsuario);
-  if (!profile || !MASTER_ROLES.has(role)) {
-    throw Object.assign(new Error('A integração do PONTO RH é exclusiva do usuário MASTER.'), { status: 403 });
-  }
-  return { uid };
+  if (!profile) throw Object.assign(new Error('Perfil do usuário não encontrado.'), { status: 403 });
+
+  const role = normalizeRole(profile.role || profile.perfil || profile.tipoUsuario);
+  const isMaster = MASTER_ROLES.has(role);
+  const companyId = String(profile.empresaId || profile.companyId || '').trim();
+  return { uid, role, isMaster, companyId };
 }
 
 async function adminContext(request: Request) {
   const serviceAccount = workflowServiceAccountFromEnvironment();
   const accessToken = await getWorkflowGoogleAccessToken(serviceAccount);
-  const caller = await requireMaster(request, serviceAccount.project_id, accessToken);
-  return { projectId: serviceAccount.project_id, accessToken, caller };
+  const identity = await firebaseIdentity(request, serviceAccount.project_id, accessToken);
+  return { projectId: serviceAccount.project_id, accessToken, identity };
 }
 
 async function requireCompany(projectId: string, accessToken: string, companyId: string) {
@@ -113,133 +72,214 @@ async function requireCompany(projectId: string, accessToken: string, companyId:
   return company;
 }
 
-async function loadConfig(projectId: string, accessToken: string, companyId: string) {
-  return readFirestoreDocument({ projectId, accessToken, collection: CONFIG_COLLECTION, documentId: configId(companyId) });
+async function modulesForCompany(projectId: string, accessToken: string, companyId: string, company?: Record<string, any> | null) {
+  const moduleDoc = await readFirestoreDocument({ projectId, accessToken, collection: 'empresa_modulos', documentId: companyId });
+  const source = moduleDoc?.modules || moduleDoc?.modulos || company?.modules || company?.modulos || company?.rawTenantData?.modules || {};
+  return source && typeof source === 'object' ? source : {};
 }
 
-function publicConfig(config: Record<string, any> | null, companyId: string) {
-  return {
-    companyId,
-    provider: 'PONTO_RH',
-    baseUrl: String(config?.baseUrl || DEFAULT_PONTO_URL),
-    clientId: String(config?.clientId || ''),
-    hasClientSecret: Boolean(config?.clientSecretEncrypted),
-    pontoCompanyId: String(config?.pontoCompanyId || ''),
-    pontoCompanyName: String(config?.pontoCompanyName || ''),
-    status: String(config?.status || 'NAO_CONFIGURADO'),
-    lastCheckedAt: config?.lastCheckedAt || null,
-    lastSyncAt: config?.lastSyncAt || null,
-    lastError: config?.lastError || null,
-    updatedAt: config?.updatedAt || null,
-  };
+function pointModuleEnabled(modules: Record<string, any>) {
+  return Boolean(modules.departamentoPessoal || modules.dp || modules.ponto || modules.departamento_pessoal);
 }
 
-async function pontoToken(config: Record<string, any>) {
-  const clientId = String(config.clientId || '').trim();
-  const encrypted = String(config.clientSecretEncrypted || '').trim();
-  if (!clientId || !encrypted) throw Object.assign(new Error('Client ID e Client Secret do PONTO RH ainda não foram configurados.'), { status: 400 });
-  const clientSecret = await decryptSecret(encrypted);
-  const baseUrl = cleanBaseUrl(config.baseUrl);
-  const response = await fetch(`${baseUrl}/api/v1/integracoes/auth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, clientSecret }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  const body: any = await response.json().catch(() => ({}));
-  const data = body?.data || body;
-  if (!response.ok || !data?.accessToken) {
-    throw Object.assign(new Error(body?.error?.message || 'O PONTO RH recusou as credenciais informadas.'), { status: 502 });
-  }
-  return { baseUrl, accessToken: String(data.accessToken) };
+function companyName(company: Record<string, any>) {
+  const raw = company.rawTenantData && typeof company.rawTenantData === 'object' ? company.rawTenantData : company;
+  return String(raw.companyName || raw.nomeEmpresa || raw.razaoSocial || company.companyName || company.nomeEmpresa || '').trim();
 }
 
-async function pontoGet(config: Record<string, any>, path: string) {
-  const token = await pontoToken(config);
-  const response = await fetch(`${token.baseUrl}${path}`, {
-    headers: { Authorization: `Bearer ${token.accessToken}` },
+function companyTradeName(company: Record<string, any>) {
+  const raw = company.rawTenantData && typeof company.rawTenantData === 'object' ? company.rawTenantData : company;
+  return String(raw.tradeName || raw.nomeFantasia || raw.companyName || raw.nomeEmpresa || '').trim();
+}
+
+function companyCnpj(company: Record<string, any>) {
+  const raw = company.rawTenantData && typeof company.rawTenantData === 'object' ? company.rawTenantData : company;
+  return String(raw.cnpj || company.cnpj || '').replace(/\D/g, '');
+}
+
+function companyStatus(company: Record<string, any>) {
+  const raw = company.rawTenantData && typeof company.rawTenantData === 'object' ? company.rawTenantData : company;
+  return String(raw.status || company.status || 'Ativo');
+}
+
+async function pontoRequest(path: string, init?: RequestInit) {
+  const response = await fetch(`${pontoBaseUrl()}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${systemToken()}`,
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
     signal: AbortSignal.timeout(20_000),
   });
   const body: any = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(body?.error?.message || `PONTO RH retornou HTTP ${response.status}.`), { status: 502 });
+  if (!response.ok) {
+    throw Object.assign(new Error(body?.error?.message || `PONTO RH retornou HTTP ${response.status}.`), { status: 502 });
+  }
   return body?.data || body;
 }
 
-async function saveConnectionStatus(args: {
-  projectId: string;
-  accessToken: string;
-  companyId: string;
-  status: string;
-  lastError?: string | null;
-  pontoCompanyId?: string;
-  pontoCompanyName?: string;
-  checked?: boolean;
-  synced?: boolean;
-}) {
-  const now = new Date().toISOString();
+async function saveStatus(projectId: string, accessToken: string, companyId: string, data: Record<string, unknown>) {
   await patchFirestoreDocument({
-    projectId: args.projectId,
-    accessToken: args.accessToken,
-    collection: CONFIG_COLLECTION,
-    documentId: configId(args.companyId),
+    projectId,
+    accessToken,
+    collection: STATUS_COLLECTION,
+    documentId: companyId,
     data: {
-      status: args.status,
-      lastError: args.lastError || null,
-      ...(args.checked ? { lastCheckedAt: now } : {}),
-      ...(args.synced ? { lastSyncAt: now } : {}),
-      ...(args.pontoCompanyId ? { pontoCompanyId: args.pontoCompanyId } : {}),
-      ...(args.pontoCompanyName ? { pontoCompanyName: args.pontoCompanyName } : {}),
-      updatedAt: now,
+      empresaId: companyId,
+      companyId,
+      provider: 'PONTO_RH',
+      automatico: true,
+      ...data,
+      updatedAt: new Date().toISOString(),
     },
   });
 }
 
-export async function GET(request: Request) {
-  try {
-    const { projectId, accessToken } = await adminContext(request);
-    const companyId = String(new URL(request.url).searchParams.get('companyId') || '').trim();
-    await requireCompany(projectId, accessToken, companyId);
-    const config = await loadConfig(projectId, accessToken, companyId);
-    return Response.json({ success: true, config: publicConfig(config, companyId) }, { headers: JSON_HEADERS });
-  } catch (error: any) {
-    return Response.json({ success: false, error: String(error?.message || 'Falha ao carregar integração de ponto.') }, { status: Number(error?.status || 500), headers: JSON_HEADERS });
+async function ensureTenant(projectId: string, accessToken: string, companyId: string) {
+  const company = await requireCompany(projectId, accessToken, companyId);
+  const modules = await modulesForCompany(projectId, accessToken, companyId, company);
+  if (!pointModuleEnabled(modules)) {
+    await saveStatus(projectId, accessToken, companyId, { status: 'DESATIVADO_MODULO', lastError: null });
+    return { skipped: true, reason: 'DP/Ponto não habilitado para esta empresa.' };
   }
+
+  const result = await pontoRequest('/api/v1/internal/rh-mil/tenants/sync', {
+    method: 'POST',
+    body: JSON.stringify({
+      empresaId: companyId,
+      companyName: companyName(company),
+      tradeName: companyTradeName(company),
+      cnpj: companyCnpj(company),
+      status: companyStatus(company),
+      timezone: 'America/Sao_Paulo',
+    }),
+  });
+
+  await saveStatus(projectId, accessToken, companyId, {
+    status: 'CONECTADO',
+    pontoEmpresaId: String(result?.pontoEmpresaId || ''),
+    lastError: null,
+    lastProvisionAt: new Date().toISOString(),
+  });
+  return result;
 }
 
-export async function PUT(request: Request) {
-  try {
-    const { projectId, accessToken, caller } = await adminContext(request);
-    const body: any = await request.json().catch(() => ({}));
-    const companyId = String(body.companyId || '').trim();
-    await requireCompany(projectId, accessToken, companyId);
-    const previous = await loadConfig(projectId, accessToken, companyId);
-    const clientId = String(body.clientId || '').trim();
-    const clientSecret = String(body.clientSecret || '').trim();
-    if (!clientId) throw Object.assign(new Error('Client ID do PONTO RH é obrigatório.'), { status: 400 });
-    if (!clientSecret && !previous?.clientSecretEncrypted) throw Object.assign(new Error('Client Secret do PONTO RH é obrigatório na primeira configuração.'), { status: 400 });
-    const now = new Date().toISOString();
+async function syncCompany(projectId: string, accessToken: string, companyId: string, inicio?: string, fim?: string) {
+  await ensureTenant(projectId, accessToken, companyId);
+  const start = String(inicio || new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10));
+  const end = String(fim || new Date().toISOString().slice(0, 10));
+  let cursor = '';
+  let imported = 0;
+
+  for (let page = 0; page < 20; page += 1) {
+    const params = new URLSearchParams({ inicio: start, fim: end, limite: '200' });
+    if (cursor) params.set('cursor', cursor);
+    const result = await pontoRequest(`/api/v1/internal/rh-mil/tenants/${encodeURIComponent(companyId)}/marcacoes?${params.toString()}`);
+    const items = Array.isArray(result?.items) ? result.items : [];
+
+    for (const mark of items) {
+      const markId = String(mark?.id || '').replace(/[^A-Za-z0-9_-]/g, '_');
+      if (!markId) continue;
+      await patchFirestoreDocument({
+        projectId,
+        accessToken,
+        collection: 'registros_ponto',
+        documentId: `ponto_${markId}`,
+        data: {
+          id: `ponto_${markId}`,
+          empresaId: companyId,
+          companyId,
+          funcionarioId: String(mark.externalEmployeeId || ''),
+          colaboradorId: String(mark.externalEmployeeId || ''),
+          externalEmployeeId: String(mark.externalEmployeeId || ''),
+          externalPunchId: String(mark.id || ''),
+          tipo: String(mark.tipo || ''),
+          dataReferencia: mark.dataReferencia || null,
+          horaOficial: mark.horaOficial || null,
+          dataHoraServidor: mark.dataHoraServidor || null,
+          dataHoraDispositivo: mark.dataHoraDispositivo || null,
+          origem: mark.origem || 'PONTO_RH',
+          protocolo: mark.protocolo || null,
+          nsr: mark.nsr ?? null,
+          localTrabalhoId: mark.localTrabalhoId || null,
+          localTrabalhoNome: mark.localTrabalhoNome || null,
+          latitude: mark.latitude ?? null,
+          longitude: mark.longitude ?? null,
+          precisaoMetros: mark.precisaoMetros ?? null,
+          provider: 'PONTO_RH',
+          sincronizadoEm: new Date().toISOString(),
+        },
+      });
+      imported += 1;
+    }
+
+    cursor = String(result?.nextCursor || '');
+    if (!cursor || items.length === 0) break;
+  }
+
+  const bank = await pontoRequest(`/api/v1/internal/rh-mil/tenants/${encodeURIComponent(companyId)}/banco-horas`);
+  const bankItems = Array.isArray(bank?.items) ? bank.items : [];
+  for (const item of bankItems) {
+    const employeeId = String(item?.externalEmployeeId || '').trim();
+    if (!employeeId) continue;
+    const safeId = employeeId.replace(/[^A-Za-z0-9_-]/g, '_');
     await patchFirestoreDocument({
       projectId,
       accessToken,
-      collection: CONFIG_COLLECTION,
-      documentId: configId(companyId),
+      collection: 'ponto_banco_horas',
+      documentId: `${companyId}__${safeId}`,
       data: {
+        empresaId: companyId,
         companyId,
+        funcionarioId: employeeId,
+        externalEmployeeId: employeeId,
+        matricula: item.matricula || null,
+        colaboradorNome: item.colaboradorNome || null,
+        creditosMinutos: Number(item.creditosMinutos || 0),
+        debitosMinutos: Number(item.debitosMinutos || 0),
+        saldoMinutos: Number(item.saldoMinutos || 0),
+        atualizadoEmPonto: item.atualizadoEm || null,
         provider: 'PONTO_RH',
-        baseUrl: cleanBaseUrl(body.baseUrl || previous?.baseUrl || DEFAULT_PONTO_URL),
-        clientId,
-        clientSecretEncrypted: clientSecret ? await encryptSecret(clientSecret) : previous?.clientSecretEncrypted,
-        status: previous?.status || 'CONFIGURADO',
-        createdAt: previous?.createdAt || now,
-        createdBy: previous?.createdBy || caller.uid,
-        updatedAt: now,
-        updatedBy: caller.uid,
+        sincronizadoEm: new Date().toISOString(),
       },
     });
-    const config = await loadConfig(projectId, accessToken, companyId);
-    return Response.json({ success: true, config: publicConfig(config, companyId) }, { headers: JSON_HEADERS });
+  }
+
+  await saveStatus(projectId, accessToken, companyId, {
+    status: 'CONECTADO',
+    lastError: null,
+    lastSyncAt: new Date().toISOString(),
+  });
+
+  return { importedPunches: imported, bankRecords: bankItems.length, inicio: start, fim: end };
+}
+
+function resolvedCompanyId(identity: Awaited<ReturnType<typeof firebaseIdentity>>, requested: unknown) {
+  if (identity.isMaster) return String(requested || identity.companyId || '').trim();
+  if (!identity.companyId) throw Object.assign(new Error('Usuário não está vinculado a uma empresa.'), { status: 403 });
+  return identity.companyId;
+}
+
+export async function GET(request: Request) {
+  try {
+    const { projectId, accessToken, identity } = await adminContext(request);
+    const requested = new URL(request.url).searchParams.get('companyId');
+    const companyId = resolvedCompanyId(identity, requested);
+    const company = await requireCompany(projectId, accessToken, companyId);
+    const modules = await modulesForCompany(projectId, accessToken, companyId, company);
+    const integration = await readFirestoreDocument({ projectId, accessToken, collection: STATUS_COLLECTION, documentId: companyId });
+    return Response.json({
+      success: true,
+      empresaId: companyId,
+      automatico: true,
+      moduleEnabled: pointModuleEnabled(modules),
+      status: integration?.status || (pointModuleEnabled(modules) ? 'PENDENTE_PROVISIONAMENTO' : 'DESATIVADO_MODULO'),
+      lastSyncAt: integration?.lastSyncAt || null,
+      lastError: integration?.lastError || null,
+    }, { headers: JSON_HEADERS });
   } catch (error: any) {
-    return Response.json({ success: false, error: String(error?.message || 'Falha ao salvar integração de ponto.') }, { status: Number(error?.status || 500), headers: JSON_HEADERS });
+    return Response.json({ success: false, error: String(error?.message || 'Falha ao consultar integração de ponto.') }, { status: Number(error?.status || 500), headers: JSON_HEADERS });
   }
 }
 
@@ -249,104 +289,22 @@ export async function POST(request: Request) {
   try {
     context = await adminContext(request);
     const body: any = await request.json().catch(() => ({}));
-    companyId = String(body.companyId || '').trim();
-    await requireCompany(context.projectId, context.accessToken, companyId);
-    const config = await loadConfig(context.projectId, context.accessToken, companyId);
-    if (!config) throw Object.assign(new Error('Configure o PONTO RH antes de testar a conexão.'), { status: 400 });
-    const action = String(body.action || 'test').toLowerCase();
+    companyId = resolvedCompanyId(context.identity, body.companyId);
+    const action = String(body.action || 'sync').toLowerCase();
 
-    if (action === 'test') {
-      const status = await pontoGet(config, '/api/v1/integracoes/ponto/status');
-      const pontoCompanyId = String(status?.empresa?.id || '');
-      const pontoCompanyName = String(status?.empresa?.nomeFantasia || status?.empresa?.razaoSocial || '');
-      await saveConnectionStatus({ projectId: context.projectId, accessToken: context.accessToken, companyId, status: 'CONECTADO', lastError: null, pontoCompanyId, pontoCompanyName, checked: true });
-      return Response.json({ success: true, status: 'CONECTADO', empresa: status?.empresa || null }, { headers: JSON_HEADERS });
+    if (action === 'ensure') {
+      if (!context.identity.isMaster) throw Object.assign(new Error('Provisionamento automático é exclusivo do MASTER.'), { status: 403 });
+      const result = await ensureTenant(context.projectId, context.accessToken, companyId);
+      return Response.json({ success: true, automatico: true, result }, { headers: JSON_HEADERS });
     }
 
     if (action !== 'sync') throw Object.assign(new Error('Ação de integração inválida.'), { status: 400 });
-
-    const inicio = String(body.inicio || new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10));
-    const fim = String(body.fim || new Date().toISOString().slice(0, 10));
-    let cursor = '';
-    let imported = 0;
-    for (let page = 0; page < 20; page += 1) {
-      const params = new URLSearchParams({ inicio, fim, limite: '200' });
-      if (cursor) params.set('cursor', cursor);
-      const result = await pontoGet(config, `/api/v1/integracoes/ponto/marcacoes?${params.toString()}`);
-      const items = Array.isArray(result?.items) ? result.items : [];
-      for (const mark of items) {
-        const markId = String(mark?.id || '').replace(/[^A-Za-z0-9_-]/g, '_');
-        if (!markId) continue;
-        await patchFirestoreDocument({
-          projectId: context.projectId,
-          accessToken: context.accessToken,
-          collection: 'registros_ponto',
-          documentId: `ponto_${markId}`,
-          data: {
-            id: `ponto_${markId}`,
-            empresaId: companyId,
-            companyId,
-            funcionarioId: String(mark.externalEmployeeId || ''),
-            colaboradorId: String(mark.externalEmployeeId || ''),
-            externalEmployeeId: String(mark.externalEmployeeId || ''),
-            externalPunchId: String(mark.id || ''),
-            tipo: String(mark.tipo || ''),
-            dataReferencia: mark.dataReferencia || null,
-            horaOficial: mark.horaOficial || null,
-            dataHoraServidor: mark.dataHoraServidor || null,
-            dataHoraDispositivo: mark.dataHoraDispositivo || null,
-            origem: mark.origem || 'PONTO_RH',
-            protocolo: mark.protocolo || null,
-            nsr: mark.nsr ?? null,
-            localTrabalhoId: mark.localTrabalhoId || null,
-            localTrabalhoNome: mark.localTrabalhoNome || null,
-            latitude: mark.latitude ?? null,
-            longitude: mark.longitude ?? null,
-            precisaoMetros: mark.precisaoMetros ?? null,
-            provider: 'PONTO_RH',
-            sincronizadoEm: new Date().toISOString(),
-          },
-        });
-        imported += 1;
-      }
-      cursor = String(result?.nextCursor || '');
-      if (!cursor || items.length === 0) break;
-    }
-
-    const bank = await pontoGet(config, '/api/v1/integracoes/ponto/banco-horas');
-    const bankItems = Array.isArray(bank?.items) ? bank.items : [];
-    for (const item of bankItems) {
-      const employeeId = String(item?.externalEmployeeId || '').trim();
-      if (!employeeId) continue;
-      const safeId = employeeId.replace(/[^A-Za-z0-9_-]/g, '_');
-      await patchFirestoreDocument({
-        projectId: context.projectId,
-        accessToken: context.accessToken,
-        collection: 'ponto_banco_horas',
-        documentId: `${companyId}__${safeId}`,
-        data: {
-          empresaId: companyId,
-          companyId,
-          funcionarioId: employeeId,
-          externalEmployeeId: employeeId,
-          matricula: item.matricula || null,
-          colaboradorNome: item.colaboradorNome || null,
-          creditosMinutos: Number(item.creditosMinutos || 0),
-          debitosMinutos: Number(item.debitosMinutos || 0),
-          saldoMinutos: Number(item.saldoMinutos || 0),
-          atualizadoEmPonto: item.atualizadoEm || null,
-          provider: 'PONTO_RH',
-          sincronizadoEm: new Date().toISOString(),
-        },
-      });
-    }
-
-    await saveConnectionStatus({ projectId: context.projectId, accessToken: context.accessToken, companyId, status: 'CONECTADO', lastError: null, synced: true });
-    return Response.json({ success: true, importedPunches: imported, bankRecords: bankItems.length, inicio, fim }, { headers: JSON_HEADERS });
+    const result = await syncCompany(context.projectId, context.accessToken, companyId, body.inicio, body.fim);
+    return Response.json({ success: true, automatico: true, ...result }, { headers: JSON_HEADERS });
   } catch (error: any) {
-    const message = String(error?.message || 'Falha na integração com o PONTO RH.');
+    const message = String(error?.message || 'Falha na integração automática com o PONTO RH.');
     if (context && companyId) {
-      await saveConnectionStatus({ projectId: context.projectId, accessToken: context.accessToken, companyId, status: 'ERRO', lastError: message, checked: true }).catch(() => undefined);
+      await saveStatus(context.projectId, context.accessToken, companyId, { status: 'ERRO', lastError: message }).catch(() => undefined);
     }
     return Response.json({ success: false, error: message }, { status: Number(error?.status || 500), headers: JSON_HEADERS });
   }
