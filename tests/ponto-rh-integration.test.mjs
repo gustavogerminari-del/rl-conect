@@ -4,46 +4,52 @@ import test from 'node:test';
 
 const route = readFileSync(new URL('../app/api/integrations/ponto/route.ts', import.meta.url), 'utf8');
 const service = readFileSync(new URL('../src/services/PontoIntegrationService.ts', import.meta.url), 'utf8');
-const panel = readFileSync(new URL('../src/master-admin/components/PontoIntegrationPanel.tsx', import.meta.url), 'utf8');
 const master = readFileSync(new URL('../src/master-admin/components/MasterAdminView.tsx', import.meta.url), 'utf8');
 
 const compact = (value) => value.replace(/\s+/g, ' ');
 
-test('segredo do PONTO RH é tratado somente no backend e criptografado', () => {
-  assert.match(route, /PONTO_RH_INTEGRATION_KEY/);
-  assert.match(route, /AES-GCM/);
-  assert.match(route, /clientSecretEncrypted/);
-  assert.doesNotMatch(service, /clientSecretEncrypted/);
-  assert.doesNotMatch(panel, /clientSecretEncrypted/);
+test('integração usa um único token servidor-servidor e nenhuma credencial por empresa', () => {
+  assert.match(route, /PONTO_RH_SYSTEM_TOKEN/);
+  assert.match(route, /PONTO_RH_BASE_URL/);
+  assert.doesNotMatch(route, /clientSecretEncrypted/);
+  assert.doesNotMatch(route, /PONTO_RH_INTEGRATION_KEY/);
+  assert.doesNotMatch(service, /clientSecret/);
+  assert.doesNotMatch(service, /clientId/);
+  assert.doesNotMatch(master, /Client Secret/);
+  assert.doesNotMatch(master, /Client ID/);
 });
 
-test('backend exige MASTER e valida a empresa no Firestore', () => {
-  assert.match(route, /A integração do PONTO RH é exclusiva do usuário MASTER/);
-  assert.match(route, /collection: 'empresas'/);
-  assert.match(route, /Empresa não encontrada no RH-MIL/);
-});
-
-test('empresa usada na sincronização vem da configuração autenticada do RH-MIL', () => {
+test('empresa comum é sempre resolvida pela sessão Firebase e MASTER pode provisionar empresa selecionada', () => {
   const source = compact(route);
-  assert.match(source, /const companyId = String\(body\.companyId/);
+  assert.match(source, /const companyId = String\(profile\.empresaId \|\| profile\.companyId/);
+  assert.match(source, /if \(identity\.isMaster\) return String\(requested/);
+  assert.match(source, /return identity\.companyId/);
+  assert.match(source, /Provisionamento automático é exclusivo do MASTER/);
+});
+
+test('ativação de DP ou Ponto dispara provisionamento automático no Painel Master', () => {
+  assert.match(master, /onSnapshot\(collection\(db, 'empresas'\)/);
+  assert.match(master, /departamentoPessoal/);
+  assert.match(master, /PontoIntegrationService\.ensure\(companyDoc\.id\)/);
+  assert.doesNotMatch(master, /Integração PONTO RH/);
+  assert.doesNotMatch(master, /PontoIntegrationPanel/);
+});
+
+test('backend provisiona tenant central usando empresaId do RH-MIL', () => {
+  const source = compact(route);
+  assert.match(source, /\/api\/v1\/internal\/rh-mil\/tenants\/sync/);
   assert.match(source, /empresaId: companyId/);
-  assert.match(source, /companyId,/);
+  assert.match(source, /companyName: companyName\(company\)/);
+  assert.match(source, /cnpj: companyCnpj\(company\)/);
+  assert.match(source, /automatico: true/);
+});
+
+test('sincronização central mantém empresaId em todos os dados gravados', () => {
+  const source = compact(route);
+  assert.match(source, /\/internal\/rh-mil\/tenants\/\$\{encodeURIComponent\(companyId\)\}\/marcacoes/);
+  assert.match(source, /\/internal\/rh-mil\/tenants\/\$\{encodeURIComponent\(companyId\)\}\/banco-horas/);
   assert.match(source, /collection: 'registros_ponto'/);
   assert.match(source, /collection: 'ponto_banco_horas'/);
-});
-
-test('teste de conexão usa token sistema-a-sistema e status real do PONTO RH', () => {
-  assert.match(route, /\/api\/v1\/integracoes\/auth\/token/);
-  assert.match(route, /\/api\/v1\/integracoes\/ponto\/status/);
-  assert.match(route, /status: 'CONECTADO'/);
-  assert.match(route, /O PONTO RH recusou as credenciais informadas/);
-});
-
-test('Painel Master possui acesso dedicado à integração de ponto', () => {
-  assert.match(master, /Integração PONTO RH/);
-  assert.match(master, /PontoIntegrationPanel/);
-  assert.match(panel, /Client ID/);
-  assert.match(panel, /Client Secret/);
-  assert.match(panel, /Testar conexão/);
-  assert.match(panel, /Sincronizar ponto agora/);
+  assert.match(source, /empresaId: companyId/);
+  assert.match(source, /companyId,/);
 });
