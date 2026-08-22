@@ -19,9 +19,15 @@ PONTO RH
 
 A mesma base de código e a mesma API atendem todas as empresas. Os dados continuam isolados pelo tenant.
 
-## Ativação automática
+## O que o MASTER faz
 
-O Painel Master continua responsável apenas por habilitar os módulos da empresa.
+O MASTER não configura integração de ponto.
+
+Ele apenas ativa ou desativa os módulos da empresa normalmente. Quando DP/Ponto é habilitado, a integração é executada por trás do sistema.
+
+Não existe menu de Client ID, Client Secret, URL de API, botão Conectar ou configuração manual por empresa.
+
+## Ativação automática
 
 Quando `departamentoPessoal`, `dp` ou `ponto` é ativado para uma empresa:
 
@@ -51,7 +57,7 @@ RH_MIL_SYSTEM_TOKEN="a-mesma-chave-longa-aleatoria"
 
 O token nunca recebe prefixo `VITE_`, nunca vai para o navegador e nunca é salvo por empresa.
 
-Usuários comuns não escolhem `empresaId`: o backend resolve a empresa a partir do perfil Firebase autenticado. O MASTER pode informar uma empresa somente nas operações administrativas de provisionamento.
+Usuários comuns não escolhem `empresaId`: o backend resolve a empresa a partir do perfil Firebase autenticado. O MASTER pode informar uma empresa somente nas operações administrativas de provisionamento interno.
 
 ## Sincronização de ponto
 
