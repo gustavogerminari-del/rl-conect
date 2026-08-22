@@ -1,48 +1,84 @@
-# Integração RH-MIL ↔ PONTO RH
+# Integração automática RH-MIL ↔ PONTO RH
 
-## Arquitetura
+## Arquitetura oficial
 
-O PONTO RH possui uma única API para todas as empresas. Cada empresa recebe um `Client ID` e um `Client Secret` próprios. O token emitido pela API do PONTO RH identifica o tenant e impede que uma credencial consulte dados de outra empresa.
+O RH-MIL e o PONTO RH usam uma integração interna central multi-tenant. Não existe API, Client ID ou Client Secret por empresa no Painel Master.
 
-URL padrão do PONTO RH:
+Existe somente uma credencial privada servidor-servidor entre as duas plataformas. O `empresaId` do RH-MIL identifica o tenant em todas as operações.
 
-`https://pronto-rh.gustavogerminari.workers.dev`
+```text
+RH-MIL
+  ↓
+API interna central
+  ↓ empresaId
+PONTO RH
+  ├─ Empresa A
+  ├─ Empresa B
+  └─ Empresa C
+```
 
-No RH-MIL, a configuração fica no Painel Master em **Integração PONTO RH**.
+A mesma base de código e a mesma API atendem todas as empresas. Os dados continuam isolados pelo tenant.
+
+## Ativação automática
+
+O Painel Master continua responsável apenas por habilitar os módulos da empresa.
+
+Quando `departamentoPessoal`, `dp` ou `ponto` é ativado para uma empresa:
+
+1. o RH-MIL detecta a alteração no cadastro da empresa;
+2. chama o backend `/api/integrations/ponto` com ação `ensure`;
+3. o backend lê os dados reais da empresa no Firestore;
+4. chama `POST /api/v1/internal/rh-mil/tenants/sync` no PONTO RH;
+5. o PONTO RH cria ou atualiza o tenant usando o `empresaId` do RH-MIL como `external_company_id`;
+6. o vínculo passa a ser automático e idempotente.
+
+Nenhum usuário precisa cadastrar credenciais manualmente.
 
 ## Segurança
 
-O navegador envia o Client Secret uma única vez para `/api/integrations/ponto`. O backend criptografa o segredo com AES-GCM antes de persistir em `integration_secrets`.
-
-A chave `PONTO_RH_INTEGRATION_KEY` é server-only e deve possuir pelo menos 32 caracteres. Nunca use prefixo `VITE_` nessa chave.
-
-O backend só aceita usuário Firebase com perfil MASTER. A resposta enviada ao navegador informa apenas `hasClientSecret: true/false`; o segredo criptografado e o segredo original nunca retornam ao frontend.
-
-## Teste de conexão
-
-1. O RH-MIL solicita token em `POST /api/v1/integracoes/auth/token`.
-2. Com o Bearer token, consulta `GET /api/v1/integracoes/ponto/status`.
-3. O ID e nome da empresa retornados pelo PONTO RH são registrados na configuração do RH-MIL.
-4. Só após resposta real o status fica `CONECTADO`.
-
-## Sincronização
-
-O botão **Sincronizar ponto agora**:
-
-- consulta marcações paginadas em `/api/v1/integracoes/ponto/marcacoes`;
-- grava/upserta os registros em `registros_ponto` usando `empresaId` do RH-MIL;
-- consulta `/api/v1/integracoes/ponto/banco-horas`;
-- grava/upserta os saldos em `ponto_banco_horas`;
-- registra `lastSyncAt` somente após concluir a sincronização.
-
-`externalEmployeeId` deve corresponder ao ID do funcionário do RH-MIL enviado ao PONTO RH durante o provisionamento do colaborador.
-
-## Variável obrigatória no RH-MIL
+Variáveis somente no servidor do RH-MIL:
 
 ```env
-PONTO_RH_INTEGRATION_KEY="uma-chave-aleatoria-com-no-minimo-32-caracteres"
+PONTO_RH_BASE_URL="https://pronto-rh.gustavogerminari.workers.dev"
+PONTO_RH_SYSTEM_TOKEN="uma-chave-longa-aleatoria"
 ```
 
-## Pré-requisito do PONTO RH
+No PONTO RH, o mesmo valor deve ser configurado como secret:
 
-A API multiempresa deve estar publicada com os endpoints sob `/api/v1/integracoes/ponto`. A implementação está separada no repositório `PRONTO-RH` e deve ser publicada antes de o teste de conexão do RH-MIL retornar sucesso.
+```env
+RH_MIL_SYSTEM_TOKEN="a-mesma-chave-longa-aleatoria"
+```
+
+O token nunca recebe prefixo `VITE_`, nunca vai para o navegador e nunca é salvo por empresa.
+
+Usuários comuns não escolhem `empresaId`: o backend resolve a empresa a partir do perfil Firebase autenticado. O MASTER pode informar uma empresa somente nas operações administrativas de provisionamento.
+
+## Sincronização de ponto
+
+O RH-MIL consulta o gateway interno do PONTO RH:
+
+- `GET /api/v1/internal/rh-mil/tenants/:empresaId/marcacoes`
+- `GET /api/v1/internal/rh-mil/tenants/:empresaId/banco-horas`
+
+Os dados são gravados no RH-MIL mantendo o tenant:
+
+- `registros_ponto` com `empresaId` e `companyId`;
+- `ponto_banco_horas` com `empresaId` e `companyId`.
+
+Antes de sincronizar, o backend executa `ensureTenant`, de modo que uma integração pendente seja corrigida automaticamente na próxima operação.
+
+## Regra de negócio
+
+O módulo de DP/Ponto controla visibilidade e ativação funcional. A API não é duplicada por empresa.
+
+```text
+MASTER ativa DP para Empresa A
+          ↓
+RH-MIL provisiona Empresa A no PONTO RH
+          ↓
+mesma API central
+          ↓
+consultas sempre filtradas pelo empresaId da Empresa A
+```
+
+Para ativar o PONTO RH, a empresa precisa possuir razão social e CNPJ válido, pois o sistema de ponto mantém esses dados no cadastro do empregador.
