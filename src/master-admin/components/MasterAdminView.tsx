@@ -1,11 +1,15 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Code2 } from 'lucide-react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { Code2, ServerCog } from 'lucide-react';
 import {
   MasterAdminView as MasterAdminOfficialView,
   type MasterNavigationSection,
 } from './MasterAdminOfficialView';
 import { validarAcessoMaster } from '../../auth/masterValidation';
+import { db } from '../../lib/firebase';
+import { PontoIntegrationService } from '../../services/PontoIntegrationService';
+import { MasterPontoStatusPanel } from './MasterPontoStatusPanel';
 
 export type { MasterNavigationSection } from './MasterAdminOfficialView';
 
@@ -50,18 +54,28 @@ type MasterAdminViewProps = React.ComponentProps<typeof MasterAdminOfficialView>
   onOpenDeveloperArea?: () => void;
 };
 
+function pointModuleEnabled(raw: Record<string, any>) {
+  const source = raw.rawTenantData && typeof raw.rawTenantData === 'object' ? raw.rawTenantData : raw;
+  const modules = source.modules || source.modulos || raw.modules || raw.modulos || {};
+  return Boolean(modules.departamentoPessoal || modules.dp || modules.ponto || modules.departamento_pessoal);
+}
+
 /**
  * Camada de compatibilidade do Painel Master.
  *
  * - mantém a tela oficial e toda a arquitetura Firebase existente;
  * - normaliza rótulos legados (OpenAI -> Gemini);
  * - acrescenta o acesso à rota própria da Área do Programador;
+ * - provisiona automaticamente o PONTO RH quando DP/Ponto é ativado;
+ * - exibe um painel de diagnóstico da integração sem mostrar credenciais;
  * - garante rolagem vertical própria da lateral em telas desktop baixas.
  */
 export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminViewProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const provisioningRef = useRef(new Set<string>());
   const [officialSection] = useState<MasterNavigationSection>(props.initialSection ?? 'dashboard');
   const [menuHost, setMenuHost] = useState<HTMLElement | null>(null);
+  const [pontoStatusOpen, setPontoStatusOpen] = useState(false);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -99,6 +113,41 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, [onOpenDeveloperArea]);
 
+  const openPontoStatus = useCallback(async () => {
+    const validation = await validarAcessoMaster();
+    if (!validation.autorizado) {
+      window.alert(validation.motivo || 'Acesso Master não autorizado.');
+      return;
+    }
+    setPontoStatusOpen(true);
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const unsubscribe = onSnapshot(collection(db, 'empresas'), (snapshot) => {
+      for (const companyDoc of snapshot.docs) {
+        const raw = companyDoc.data() as Record<string, any>;
+        if (!pointModuleEnabled(raw) || provisioningRef.current.has(companyDoc.id)) continue;
+        provisioningRef.current.add(companyDoc.id);
+        void PontoIntegrationService.ensure(companyDoc.id)
+          .catch((error) => {
+            console.warn(`[PONTO RH] Provisionamento automático pendente para ${companyDoc.id}.`, error);
+          })
+          .finally(() => {
+            if (!disposed) provisioningRef.current.delete(companyDoc.id);
+          });
+      }
+    }, (error) => {
+      console.warn('[PONTO RH] Não foi possível observar ativações de DP/Ponto.', error);
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+      provisioningRef.current.clear();
+    };
+  }, []);
+
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -118,7 +167,6 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
 
       const host = root.querySelector('aside > div');
       setMenuHost(host instanceof HTMLElement ? host : null);
-
     };
 
     normalizeVisibleLabels();
@@ -132,16 +180,27 @@ export function MasterAdminView({ onOpenDeveloperArea, ...props }: MasterAdminVi
       <style>{MASTER_SCROLL_CSS}</style>
       <MasterAdminOfficialView {...props} initialSection={officialSection} key={officialSection} />
       {menuHost && createPortal(
-        <button
-          type="button"
-          onClick={() => void openDeveloperArea()}
-          className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-300 hover:bg-slate-800"
-        >
-          <Code2 className="h-4 w-4 shrink-0" />
-          <span>Área do Programador</span>
-        </button>,
+        <Fragment>
+          <button
+            type="button"
+            onClick={() => void openPontoStatus()}
+            className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-emerald-300 hover:bg-slate-800"
+          >
+            <ServerCog className="h-4 w-4 shrink-0" />
+            <span>PONTO RH Automático</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void openDeveloperArea()}
+            className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-300 hover:bg-slate-800"
+          >
+            <Code2 className="h-4 w-4 shrink-0" />
+            <span>Área do Programador</span>
+          </button>
+        </Fragment>,
         menuHost,
       )}
+      {pontoStatusOpen && <MasterPontoStatusPanel onClose={() => setPontoStatusOpen(false)} />}
     </div>
   );
 }
